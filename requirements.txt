@@ -1,0 +1,15 @@
+# Core dependencies
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+pydantic==2.12.0
+pydantic-settings==2.11.0
+python-dotenv==1.1.1
+
+# PDF generation
+reportlab==4.4.4
+pillow==11.3.0
+qrcode==8.2
+
+# Windows printing support (required for Windows)
+pywin32>=306  # Windows printer support
+PyMuPDF>=1.26.0  # PDF rendering for Windows printing

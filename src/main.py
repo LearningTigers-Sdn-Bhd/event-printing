@@ -11,7 +11,7 @@ from pathlib import Path
 from settings import settings, ensure_outdir # Removed get_printer_name since it's not needed here
 from models import TicketPayload
 from pdf_generator import generate_test_pdf, generate_ticket_pdf
-from printer import print_via_lp, list_cups_printers
+from printer import print_via_lp, list_cups_printers, get_default_printer
 
 app = FastAPI(title="Event Ticket Printer")
 
@@ -42,10 +42,15 @@ def health():
 
 @app.get("/printers")
 def list_printers():
-    """Lists available CUPS printers using lpstat."""
+    """Lists available printers (cross-platform: CUPS on Mac/Linux, Windows API on Windows)."""
     try:
         out = list_cups_printers()
-        return {"raw": out}
+        default = get_default_printer()
+        return {
+            "raw": out,
+            "default_printer": default,
+            "configured_printer": settings.PRINTER_NAME
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not list printers: {str(e)}")
 

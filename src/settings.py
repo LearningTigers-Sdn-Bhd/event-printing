@@ -8,9 +8,18 @@ load_dotenv()
 class Settings(BaseSettings):
     """
     Application configuration settings loaded from environment variables.
+    
+    PRINTER_NAME: Set this to your printer's exact name as it appears in your system.
+                  - Windows: Check "Devices and Printers" in Control Panel
+                  - Mac/Linux: Run `lpstat -p` to see available printers
+                  - Or use the /printers endpoint to list available printers
     """
-    PRINTER_NAME: str = "Bar Code Printer P422T_2"
-    # PRINTER_NAME: str = "HP_DeskJet_2700_series_2"
+    # Default printer name - UPDATE THIS to match your printer
+    PRINTER_NAME: str = os.getenv("PRINTER_NAME", "Microsoft Print to PDF")
+    # Example Windows printer: "Microsoft Print to PDF"
+    # Example Mac printer: "HP_DeskJet_2700_series_2"
+    # Your barcode printer: "Bar Code Printer P422T"
+    
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "out")
     PORT: int = int(os.getenv("PORT", "8000"))
 
