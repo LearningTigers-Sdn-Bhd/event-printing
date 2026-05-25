@@ -1,0 +1,55 @@
+name: Build Executables
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install fastapi==0.118.0 "uvicorn[standard]==0.37.0" pydantic==2.12.0 pydantic-settings==2.11.0 python-dotenv==1.1.1 reportlab==4.4.4 pillow==11.3.0 qrcode==8.2 pywin32 PyMuPDF pyinstaller
+
+      - name: Build executable
+        run: pyinstaller event-printing.spec --clean --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventPrinting-Windows
+          path: dist/EventPrinting.exe
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install fastapi==0.118.0 "uvicorn[standard]==0.37.0" pydantic==2.12.0 pydantic-settings==2.11.0 python-dotenv==1.1.1 reportlab==4.4.4 pillow==11.3.0 qrcode==8.2 pyinstaller
+
+      - name: Build executable
+        run: pyinstaller event-printing.spec --clean --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventPrinting-Linux
+          path: dist/EventPrinting
+          retention-days: 30
