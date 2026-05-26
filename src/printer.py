@@ -30,20 +30,57 @@ def print_via_lp(file_path: str, printer_name: Optional[str] = None) -> Dict[str
 def _print_unix(file_path: str, printer_name: str) -> Dict[str, Any]:
     """
     Sends a file to the printer using the 'lp' command (Mac/Linux).
+    Pre-rasterizes the PDF to a 1-bit PNG at the printer's native
+    203dpi so text prints as crisp solid pixels instead of being
+    halftone-dithered by the driver.
     """
     try:
-        # The '-d' flag specifies the destination printer
-        out = subprocess.check_output(["lp", "-d", printer_name, file_path], text=True)
-        
+        raster_path = _rasterize_pdf_for_zebra(file_path)
+        cmd = [
+            "lp",
+            "-d", printer_name,
+            "-o", "Darkness=15",
+            raster_path,
+        ]
+        out = subprocess.check_output(cmd, text=True)
+
         # Parse the job ID from the output
         m = re.search(r"request id is (\S+)", out)
         job_id = m.group(1) if m else out.strip()
-        
+
         return {"job_id": job_id, "raw": out, "platform": "unix"}
     except subprocess.CalledProcessError as e:
         return {"error": str(e), "output": e.output}
     except FileNotFoundError:
         return {"error": "The 'lp' command was not found. Is CUPS installed?"}
+
+
+def _rasterize_pdf_for_zebra(pdf_path: str) -> str:
+    """
+    Render first page of PDF to a 1-bit PNG at 203dpi (P422T native).
+    Supersamples at 2x then downsamples with LANCZOS so anti-aliased
+    edges resolve into cleaner 1-bit pixels with fewer broken strokes.
+    """
+    import fitz
+    from PIL import Image
+    import os
+
+    target_dpi = 203
+    super_dpi = target_dpi * 2
+    zoom = super_dpi / 72
+    doc = fitz.open(pdf_path)
+    page = doc[0]
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat, alpha=False, colorspace=fitz.csGRAY)
+    hi = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+    target_w = round(pix.width / 2)
+    target_h = round(pix.height / 2)
+    lo = hi.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    bw = lo.point(lambda p: 0 if p < 200 else 255, mode="1")
+    out_path = os.path.splitext(pdf_path)[0] + "-print.png"
+    bw.save(out_path, "PNG", dpi=(target_dpi, target_dpi))
+    doc.close()
+    return out_path
 
 
 def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
