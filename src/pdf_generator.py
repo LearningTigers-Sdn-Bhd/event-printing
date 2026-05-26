@@ -115,162 +115,112 @@ def get_name_lines(name: str):
     
     return font_size, lines
 
-def calculate_layout_spacing(name_lines_count: int, company_lines_count: int, title_lines_count: int):
-    """
-    Dynamically calculates spacing based on total content to prevent overlap with ticket type.
-    Returns: (name_line_spacing, section_spacing, line_spacing)
-    """
-    total_lines = name_lines_count + company_lines_count + title_lines_count
-    
-    # Default spacings (for short content)
-    name_line_spacing = 0.4 * inch
-    section_spacing = 0.4 * inch  # Space between name and company
-    line_spacing = 0.2 * inch  # Space between company/title lines
-    
-    # Adjust based on total content length - increased line spacing to prevent overlap
-    if total_lines >= 12:  # Super extreme content
-        name_line_spacing = 0.20 * inch
-        section_spacing = 0.18 * inch
-        line_spacing = 0.23 * inch  # Increased a bit more for perfect spacing
-    elif total_lines >= 10:  # Extremely long content
-        name_line_spacing = 0.22 * inch
-        section_spacing = 0.20 * inch
-        line_spacing = 0.23 * inch  # Increased a bit more for perfect spacing
-    elif total_lines >= 8:  # Very long content
-        name_line_spacing = 0.26 * inch
-        section_spacing = 0.22 * inch
-        line_spacing = 0.23 * inch  # Increased a bit more for perfect spacing
-    elif total_lines >= 6:  # Long content
-        name_line_spacing = 0.35 * inch
-        section_spacing = 0.35 * inch
-        line_spacing = 0.25 * inch
-    elif total_lines >= 5:  # Medium-long content
-        name_line_spacing = 0.35 * inch
-        section_spacing = 0.35 * inch
-        line_spacing = 0.18 * inch
-    
-    return name_line_spacing, section_spacing, line_spacing
+def get_name_lines_for_width(name: str, max_width: float):
+    name_upper = name.upper().strip()
+    font_name = "Helvetica-Bold"
+
+    for font_size in [20, 16, 13, 11]:
+        if stringWidth(name_upper, font_name, font_size) <= max_width:
+            return font_size, [name_upper]
+
+    for font_size in [16, 13, 11]:
+        words = name_upper.split()
+        for i in range(1, len(words)):
+            line1 = " ".join(words[:i])
+            line2 = " ".join(words[i:])
+            if (stringWidth(line1, font_name, font_size) <= max_width and
+                    stringWidth(line2, font_name, font_size) <= max_width):
+                return font_size, [line1, line2]
+
+    lines = wrap_text_to_width(name_upper, font_name, 10, max_width)
+    return 10, lines
+
+
+def generate_qr_image(data: str) -> ImageReader:
+    qr = qrcode.QRCode(box_size=4, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return ImageReader(buf)
 
 
 def generate_ticket_pdf(path: Path, data: TicketPayload):
-    """
-    Generates an event badge PDF with all-caps text and auto-wrapped lines.
-    Dynamically adjusts spacing to prevent overlap with fixed ticket type.
-    """
-    # Badge size (H, W)
-    h, w = 5.7 * inch, 4.15 * inch
+    # Sticker size: 100mm x 80mm
+    w, h = 100 / 25.4 * inch, 80 / 25.4 * inch
     c = canvas.Canvas(str(path), pagesize=(w, h))
 
-    # Margins and layout constants
-    side_margin = 0.3 * inch
+    side_margin = 0.2 * inch
     max_text_width = w - (2 * side_margin)
-    
-    # Fixed positions
-    ticket_type_y = 1.40 * inch  # Fixed position for ticket type
-    min_gap = 0.15 * inch  # Minimum gap between title and ticket type
-    
-    # --- PRE-CALCULATE all content to determine spacing ---
-    
-    # 1. Get name lines
-    name_font_size, name_lines = get_name_lines(data.name)
-    
-    # 2. Get company lines with progressive font sizing
-    font_name_company = "Helvetica"
-    font_size_company = 15
-    company_lines = wrap_text_to_width(data.company, font_name_company, font_size_company, max_text_width)
-    
-    # Progressive font reduction for company - very aggressive for extreme cases
-    if len(company_lines) > 5:
-        font_size_company = 6  # Even smaller for extreme cases
-        company_lines = wrap_text_to_width(data.company, font_name_company, font_size_company, max_text_width)
-    elif len(company_lines) > 4:
-        font_size_company = 6
-        company_lines = wrap_text_to_width(data.company, font_name_company, font_size_company, max_text_width)
-    elif len(company_lines) > 3:
-        font_size_company = 12
-        company_lines = wrap_text_to_width(data.company, font_name_company, font_size_company, max_text_width)
-    elif len(company_lines) > 2:
-        font_size_company = 13
-        company_lines = wrap_text_to_width(data.company, font_name_company, font_size_company, max_text_width)
-    
-    # 3. Get title lines with progressive font sizing
-    font_name_title = "Helvetica-Oblique"
-    font_size_title = 14
-    title_lines = wrap_text_to_width(data.title, font_name_title, font_size_title, max_text_width)
-    
-    # Progressive font reduction for title - very aggressive for extreme cases
-    if len(title_lines) > 5:
-        font_size_title = 6  # Even smaller for extreme cases
-        title_lines = wrap_text_to_width(data.title, font_name_title, font_size_title, max_text_width)
-    elif len(title_lines) > 4:
-        font_size_title = 6
-        title_lines = wrap_text_to_width(data.title, font_name_title, font_size_title, max_text_width)
-    elif len(title_lines) > 3:
-        font_size_title = 11
-        title_lines = wrap_text_to_width(data.title, font_name_title, font_size_title, max_text_width)
-    elif len(title_lines) > 2:
-        font_size_title = 12
-        title_lines = wrap_text_to_width(data.title, font_name_title, font_size_title, max_text_width)
-    
-    # Calculate dynamic spacing
-    name_line_spacing, section_spacing, line_spacing = calculate_layout_spacing(
-        len(name_lines), len(company_lines), len(title_lines)
-    )
-    
-    # Adjust name line spacing based on font size - ensure proper spacing
-    if name_font_size >= 20:
-        # For larger fonts (20pt, 26pt), ensure adequate spacing between name lines
-        name_line_spacing = max(name_line_spacing, 0.35 * inch)  # More spacing for larger text
-    else:
-        # For smaller fonts (14pt, 16pt), ensure minimum spacing
-        name_line_spacing = max(name_line_spacing, 0.28 * inch)  # Minimum spacing for readability
-    
-    # --- CALCULATE total height needed ---
-    total_height_needed = (
-        (len(name_lines) * name_line_spacing) +  # Name section
-        section_spacing +  # Gap after name
-        (len(company_lines) * line_spacing) +  # Company section
-        section_spacing * 0.5 +  # Gap after company
-        (len(title_lines) * line_spacing)  # Title section
-    )
-    
-    # Calculate starting Y position to ensure we don't overlap with ticket type
-    available_height = h - 2.0 * inch - (ticket_type_y + 0.4 * inch + min_gap)
-    
-    if total_height_needed > available_height:
-        # Content is too tall, need to compress further
-        scale_factor = available_height / total_height_needed
-        name_line_spacing *= scale_factor
-        section_spacing *= scale_factor
-        line_spacing *= scale_factor
-    
-    current_y = h - 2.1 * inch
 
-    # --- RENDER: 1. Participant Name ---
+    # --- Pre-calculate content ---
+    name_font_size, name_lines = get_name_lines_for_width(data.name, max_text_width)
+
+    font_name_company = "Helvetica"
+    font_size_company = 10
+    company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
+    if len(company_lines) > 3:
+        font_size_company = 7
+        company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
+    elif len(company_lines) > 2:
+        font_size_company = 8
+        company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
+
+    role_font_size = 16
+    qr_size = 0.85 * inch
+    qr_box_pad = 0.02 * inch  # tight padding inside QR box
+    qr_box_size = qr_size + 2 * qr_box_pad
+
+    name_line_h = (name_font_size + 3) / 72 * inch
+    company_line_h = (font_size_company + 3) / 72 * inch
+    role_line_h = (role_font_size + 3) / 72 * inch
+    gap = 0.14 * inch  # padding between sections
+
+    total_h = (
+        len(name_lines) * name_line_h +
+        gap +
+        len(company_lines) * company_line_h +
+        gap +
+        qr_box_size +
+        gap +
+        role_line_h
+    )
+
+    # Center block vertically
+    start_y = (h + total_h) / 2
+
+    current_y = start_y
+
+    # --- RENDER: 1. Name ---
     c.setFont("Helvetica-Bold", name_font_size)
     c.setFillColorRGB(0.1, 0.1, 0.1)
-    for i, line in enumerate(name_lines):
-        line_y = current_y - (i * name_line_spacing)
-        c.drawCentredString(w / 2, line_y, line)
-    current_y -= (len(name_lines) * name_line_spacing) + section_spacing
+    for line in name_lines:
+        c.drawCentredString(w / 2, current_y - name_line_h, line)
+        current_y -= name_line_h
+    current_y -= gap
 
-    # --- RENDER: 2. Company Name ---
+    # --- RENDER: 2. Company ---
     c.setFont(font_name_company, font_size_company)
     for line in company_lines:
-        c.drawCentredString(w / 2, current_y, line)
-        current_y -= line_spacing
-    current_y -= section_spacing * 0.5
+        c.drawCentredString(w / 2, current_y - company_line_h, line)
+        current_y -= company_line_h
+    current_y -= gap
 
-    # --- RENDER: 3. Title ---
-    c.setFont(font_name_title, font_size_title)
-    for line in title_lines:
-        c.drawCentredString(w / 2, current_y, line)
-        current_y -= line_spacing
+    # --- RENDER: 3. QR box + QR ---
+    qr_box_x = (w - qr_box_size) / 2
+    qr_box_y = current_y - qr_box_size
+    c.setStrokeColorRGB(0.2, 0.2, 0.2)
+    c.setLineWidth(0.5)
+    c.rect(qr_box_x, qr_box_y, qr_box_size, qr_box_size)
+    qr_img = generate_qr_image(data.ticket_id)
+    c.drawImage(qr_img, qr_box_x + qr_box_pad, qr_box_y + qr_box_pad, width=qr_size, height=qr_size)
+    current_y = qr_box_y - gap
 
-    # --- RENDER: 4. Ticket Type (Fixed Position) ---
-    c.setFont("Helvetica-Bold", 24)
-    c.drawCentredString(w / 2, ticket_type_y, data.ticket_type.upper())
+    # --- RENDER: 4. Role ---
+    c.setFont("Helvetica-Bold", role_font_size)
+    c.drawCentredString(w / 2, current_y - role_line_h, data.ticket_type.upper())
 
-    # Save PDF
     c.showPage()
     c.save()

@@ -1,6 +1,7 @@
 import sys
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 # IMPORT THIS:
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -64,6 +65,15 @@ def pdf_test():
     pdf_path = Path(settings.OUTPUT_DIR) / f"test-ticket-{ts}.pdf"
     path = generate_test_pdf(pdf_path)
     return {"ok": True, "pdf": path}
+
+@app.post("/pdf-preview")
+def pdf_preview(payload: TicketPayload):
+    """Generates badge PDF and returns it for browser preview (no printing)."""
+    ensure_outdir()
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket_id}-{ts}.pdf"
+    generate_ticket_pdf(pdf_path, payload)
+    return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_path.name)
 
 # --- Printing Endpoints ---
 
