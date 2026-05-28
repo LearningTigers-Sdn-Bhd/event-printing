@@ -111,6 +111,39 @@
       </section>
 
       <section class="card">
+        <h2>Scan</h2>
+        <form id="scan-form" onsubmit="scanTicket(event)">
+          <label>Ticket ID
+            <input id="scan-input" placeholder="Scan QR or paste public_id" autocomplete="off" />
+          </label>
+          <div class="actions">
+            <button type="submit">Print &amp; check in</button>
+            <button type="button" class="ghost" onclick="$('scan-input').focus()">Focus</button>
+          </div>
+        </form>
+        <div id="scan-result" class="info" style="margin-top:10px;"></div>
+      </section>
+
+      <section class="card">
+        <h2>Backend</h2>
+        <form id="config-form" onsubmit="saveConfig(event)">
+          <label>Base URL
+            <input id="cfg-url" placeholder="https://example.eventzflow.com" autocomplete="off" />
+          </label>
+          <label>Event slug
+            <input id="cfg-slug" placeholder="event-slug" autocomplete="off" />
+          </label>
+          <label>API key <span id="cfg-key-state" style="float:right;color:var(--muted);"></span>
+            <input id="cfg-key" type="password" placeholder="(leave blank to keep)" autocomplete="off" />
+          </label>
+          <div class="actions">
+            <button type="submit">Save</button>
+            <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
         <h2>Status</h2>
         <div class="info">
           <div class="row"><span>Printer</span><span id="info-printer">—</span></div>
@@ -305,7 +338,102 @@
     setTimeout(() => { try { window.close(); } catch (e) {} }, 600);
   }
 
+  async function loadConfig() {
+    try {
+      const r = await fetch("/config");
+      const j = await r.json();
+      $("cfg-url").value = j.backend_url || "";
+      $("cfg-slug").value = j.event_slug || "";
+      $("cfg-key").value = "";
+      const stateEl = $("cfg-key-state");
+      if (j.api_key_set) stateEl.textContent = "set (" + j.api_key_masked + ")";
+      else stateEl.textContent = "not set";
+    } catch (e) {
+      log("config load failed: " + e, "err");
+    }
+  }
+
+  async function saveConfig(ev) {
+    ev.preventDefault();
+    const body = {
+      backend_url: $("cfg-url").value.trim(),
+      event_slug: $("cfg-slug").value.trim(),
+    };
+    const key = $("cfg-key").value.trim();
+    if (key) body.api_key = key;
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { log("config save failed: " + (j.detail || r.status), "err"); return; }
+      log("config saved", "ok");
+      $("cfg-key").value = "";
+      const stateEl = $("cfg-key-state");
+      if (j.api_key_set) stateEl.textContent = "set (" + j.api_key_masked + ")";
+      else stateEl.textContent = "not set";
+    } catch (e) {
+      log("config save failed: " + e, "err");
+    }
+  }
+
+  function renderScanResult(j) {
+    const el = $("scan-result");
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const rows = [];
+    const t = j.ticket || {};
+    if (t.name) rows.push(["Name", t.name]);
+    if (t.ticket_id) rows.push(["Ticket", t.ticket_id]);
+    if (t.ticket_type) rows.push(["Type", t.ticket_type]);
+    if (t.company) rows.push(["Company", t.company]);
+    if (j.already_scanned) rows.push(["Status", "already scanned"]);
+    else if (j.check_in_error) rows.push(["Status", "printed; check-in error"]);
+    else if (j.check_in) rows.push(["Status", "printed + scanned"]);
+    rows.forEach(([k, v]) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("span");
+      label.textContent = k;
+      const val = document.createElement("span");
+      val.textContent = v;
+      row.append(label, val);
+      el.append(row);
+    });
+  }
+
+  async function scanTicket(ev) {
+    if (ev) ev.preventDefault();
+    const id = $("scan-input").value.trim();
+    if (!id) return;
+    log("scan: " + id);
+    $("scan-result").textContent = "";
+    try {
+      const r = await fetch("/scan/" + encodeURIComponent(id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ print_label: true, mark_scanned: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        log("scan failed: " + (j.detail || r.status), "err");
+        return;
+      }
+      renderScanResult(j);
+      if (j.already_scanned) log("already scanned: " + (j.ticket?.ticket_id || id), "err");
+      else if (j.check_in_error) log("printed; check-in error: " + j.check_in_error, "err");
+      else log("printed + scanned: " + (j.ticket?.ticket_id || id), "ok");
+    } catch (e) {
+      log("scan failed: " + e, "err");
+    } finally {
+      $("scan-input").value = "";
+      $("scan-input").focus();
+    }
+  }
+
   refresh().then(() => log("dashboard ready", "ok"));
+  loadConfig();
   setInterval(refresh, 15000);
 </script>
 </body>

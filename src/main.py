@@ -11,12 +11,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from datetime import datetime
+from pydantic import BaseModel
 
 # Import components from other files
 from settings import settings, ensure_outdir # Removed get_printer_name since it's not needed here
 from models import TicketPayload
 from pdf_generator import generate_test_pdf, generate_ticket_pdf
 from printer import print_via_lp, list_cups_printers, get_default_printer
+import config_store
+from api_client import BackendClient, BackendError, BackendAlreadyCheckedIn
 
 app = FastAPI(title="Event Ticket Printer")
 
@@ -206,13 +209,122 @@ def print_ticket(payload: TicketPayload):
         job = print_via_lp(str(pdf_path), printer_name=target_printer_name)
         if "error" in job:
             raise HTTPException(status_code=500, detail=f"Printing failed: {job['error']}")
-            
+
         return {
-            "ok": True, 
-            "printed": True, 
-            "pdf": str(pdf_path), 
+            "ok": True,
+            "printed": True,
+            "pdf": str(pdf_path),
             "print_job": job,
             "target_printer": target_printer_name
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Printing failed during execution: {str(e)}")
+
+
+# --- Backend integration: settings + scan ---
+
+class ConfigPayload(BaseModel):
+    backend_url: str | None = None
+    event_slug: str | None = None
+    api_key: str | None = None
+
+
+class ScanOptions(BaseModel):
+    print_label: bool = True
+    mark_scanned: bool = True
+
+
+@app.get("/config")
+def get_config():
+    """Returns current backend integration config (api key masked)."""
+    return config_store.public_view()
+
+
+@app.put("/config")
+def put_config(payload: ConfigPayload):
+    """Updates and persists backend integration config."""
+    values = {k: v for k, v in payload.model_dump().items() if v is not None}
+    saved = config_store.save(values)
+    return config_store.public_view(saved)
+
+
+def _ticket_payload_from_backend(data: dict) -> TicketPayload:
+    """Maps an EventzFlow ticket response into the local TicketPayload model."""
+    custom_fields = data.get("custom_fields_data") or {}
+    if isinstance(custom_fields, dict):
+        company = (
+            custom_fields.get("company")
+            or custom_fields.get("organisation_institution")
+            or custom_fields.get("organization")
+            or custom_fields.get("organisation")
+            or None
+        )
+    else:
+        company = None
+
+    return TicketPayload(
+        ticket_id=str(data.get("public_id") or "").strip(),
+        name=str(data.get("attendee_name") or "").strip(),
+        company=company,
+        ticket_type=str(data.get("ticket_type") or "").strip() or "Visitor",
+    )
+
+
+@app.post("/scan/{public_id}")
+def scan_ticket(public_id: str, options: ScanOptions = ScanOptions()):
+    """
+    Looks up a ticket on the EventzFlow backend, prints the badge,
+    then marks the ticket as scanned. Designed to be called from the
+    dashboard's scan input (USB QR scanner emits the public_id).
+    """
+    cfg = config_store.load()
+    if not cfg.get("backend_url") or not cfg.get("event_slug"):
+        raise HTTPException(status_code=400, detail="Backend URL or event slug is not configured.")
+
+    client = BackendClient(cfg["backend_url"], cfg.get("api_key", ""))
+
+    # 1. Lookup
+    try:
+        ticket_data = client.fetch_ticket(cfg["event_slug"], public_id)
+    except BackendError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    payload = _ticket_payload_from_backend(ticket_data)
+    if not payload.ticket_id:
+        raise HTTPException(status_code=502, detail="Backend response missing public_id.")
+
+    result: dict = {
+        "ok": True,
+        "ticket": payload.model_dump(),
+    }
+
+    # 2. Print
+    if options.print_label:
+        ensure_outdir()
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = Path(settings.OUTPUT_DIR) / f"scan-{payload.ticket_id}-{ts}.pdf"
+        generate_ticket_pdf(pdf_path, payload)
+        try:
+            job = print_via_lp(str(pdf_path), printer_name=settings.PRINTER_NAME)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Printing failed: {e}")
+        if "error" in job:
+            raise HTTPException(status_code=500, detail=f"Printing failed: {job['error']}")
+        result["pdf"] = str(pdf_path)
+        result["print_job"] = job
+
+    # 3. Check-in
+    if options.mark_scanned:
+        try:
+            check_in = client.check_in(payload.ticket_id)
+            result["check_in"] = check_in
+            result["already_scanned"] = False
+        except BackendAlreadyCheckedIn as e:
+            result["already_scanned"] = True
+            result["check_in_message"] = str(e)
+        except BackendError as e:
+            # Print already happened; surface the check-in error but keep
+            # a 200 response so the operator sees the printed badge result.
+            result["check_in_error"] = str(e)
+
+    return result
