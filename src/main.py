@@ -1,12 +1,16 @@
 import sys
+import os
+import time
+import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 # IMPORT THIS:
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from pathlib import Path
 
 # Import components from other files
 from settings import settings, ensure_outdir # Removed get_printer_name since it's not needed here
@@ -15,6 +19,14 @@ from pdf_generator import generate_test_pdf, generate_ticket_pdf
 from printer import print_via_lp, list_cups_printers, get_default_printer
 
 app = FastAPI(title="Event Ticket Printer")
+
+SERVER_STARTED_AT = time.time()
+
+# Resolve static dir for both dev and PyInstaller bundled runs.
+if getattr(sys, "frozen", False):
+    _static_dir = Path(sys._MEIPASS) / "src" / "static"
+else:
+    _static_dir = Path(__file__).parent / "static"
 
 # NEW: Custom exception handler to log 422 errors
 @app.exception_handler(RequestValidationError)
@@ -28,6 +40,57 @@ async def validation_exception_handler(request, exc):
         status_code=422,
         content={"detail": exc.errors()},
     )
+
+
+# --- Dashboard ---
+
+@app.get("/")
+def dashboard():
+    """Serves the dashboard HTML."""
+    index_path = _static_dir / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=500, detail=f"Dashboard not found at {index_path}")
+    return FileResponse(str(index_path), media_type="text/html")
+
+
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+# --- Server control ---
+
+@app.get("/server/status")
+def server_status():
+    """Server uptime + pid for the dashboard control panel."""
+    return {
+        "ok": True,
+        "pid": os.getpid(),
+        "uptime_seconds": int(time.time() - SERVER_STARTED_AT),
+        "started_at": SERVER_STARTED_AT,
+    }
+
+
+@app.post("/server/restart")
+def server_restart():
+    """Re-execs the current process. Window stays open (pywebview keeps URL)."""
+    def _do_restart():
+        time.sleep(0.4)  # let the HTTP response flush first
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            os._exit(0)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"ok": True, "action": "restart"}
+
+
+@app.post("/server/quit")
+def server_quit():
+    """Hard-exit the process. Closes the pywebview window."""
+    def _do_quit():
+        time.sleep(0.4)
+        os._exit(0)
+    threading.Thread(target=_do_quit, daemon=True).start()
+    return {"ok": True, "action": "quit"}
 
 
 # --- Health and Status Endpoints ---
@@ -74,6 +137,28 @@ def pdf_preview(payload: TicketPayload):
     pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket_id}-{ts}.pdf"
     generate_ticket_pdf(pdf_path, payload)
     return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_path.name)
+
+
+@app.post("/png-preview")
+def png_preview(payload: TicketPayload):
+    """Generates badge PDF and returns it as a PNG for embedded preview."""
+    import fitz
+    from io import BytesIO
+    from fastapi.responses import Response
+
+    ensure_outdir()
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket_id}-{ts}.pdf"
+    generate_ticket_pdf(pdf_path, payload)
+
+    doc = fitz.open(str(pdf_path))
+    page = doc[0]
+    # 150 dpi = sharp on screen, small enough to be quick.
+    zoom = 150 / 72
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    buf = BytesIO(pix.tobytes("png"))
+    doc.close()
+    return Response(content=buf.getvalue(), media_type="image/png")
 
 # --- Printing Endpoints ---
 

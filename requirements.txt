@@ -10,6 +10,9 @@ reportlab==4.4.4
 pillow==11.3.0
 qrcode==8.2
 
+# Native desktop window
+pywebview>=5.0
+
 # Windows printing support (required for Windows)
-pywin32>=306  # Windows printer support
+pywin32>=306; sys_platform == "win32"  # Windows printer support
 PyMuPDF>=1.26.0  # PDF rendering for Windows printing

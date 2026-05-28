@@ -115,25 +115,62 @@ def get_name_lines(name: str):
     
     return font_size, lines
 
+def _balanced_split(words, font_name, font_size, max_width):
+    """Find the most balanced 2-line split that fits both lines under max_width."""
+    best_split = None
+    best_score = float("inf")
+    for i in range(1, len(words)):
+        line1 = " ".join(words[:i])
+        line2 = " ".join(words[i:])
+        w1 = stringWidth(line1, font_name, font_size)
+        w2 = stringWidth(line2, font_name, font_size)
+        if w1 <= max_width and w2 <= max_width:
+            score = abs(w1 - w2)
+            if score < best_score:
+                best_score = score
+                best_split = (line1, line2)
+    return best_split
+
+
 def get_name_lines_for_width(name: str, max_width: float):
+    """
+    Prefers the largest possible font size, even if that means wrapping
+    onto two lines. Iterates per size: tries single line, then a
+    balanced two-line split, before falling back to the next smaller size.
+    """
     name_upper = name.upper().strip()
     font_name = "Helvetica-Bold"
+    words = name_upper.split()
 
-    for font_size in [20, 16, 13, 11]:
+    for font_size in [26, 24, 22, 20, 18, 16, 14, 12]:
         if stringWidth(name_upper, font_name, font_size) <= max_width:
             return font_size, [name_upper]
+        if len(words) >= 2:
+            split = _balanced_split(words, font_name, font_size, max_width)
+            if split:
+                return font_size, list(split)
 
-    for font_size in [16, 13, 11]:
-        words = name_upper.split()
-        for i in range(1, len(words)):
-            line1 = " ".join(words[:i])
-            line2 = " ".join(words[i:])
-            if (stringWidth(line1, font_name, font_size) <= max_width and
-                    stringWidth(line2, font_name, font_size) <= max_width):
-                return font_size, [line1, line2]
+    return 11, wrap_text_to_width(name_upper, font_name, 11, max_width)
 
-    lines = wrap_text_to_width(name_upper, font_name, 10, max_width)
-    return 10, lines
+
+def get_role_lines_for_width(role: str, max_width: float):
+    """
+    Same large-first wrapping strategy as the name, scaled for the
+    ticket type/role line.
+    """
+    role_upper = role.upper().strip()
+    font_name = "Helvetica-Bold"
+    words = role_upper.split()
+
+    for font_size in [22, 20, 18, 16, 14, 12]:
+        if stringWidth(role_upper, font_name, font_size) <= max_width:
+            return font_size, [role_upper]
+        if len(words) >= 2:
+            split = _balanced_split(words, font_name, font_size, max_width)
+            if split:
+                return font_size, list(split)
+
+    return 11, wrap_text_to_width(role_upper, font_name, 11, max_width)
 
 
 def generate_qr_image(data: str) -> ImageReader:
@@ -159,37 +196,43 @@ def generate_ticket_pdf(path: Path, data: TicketPayload):
     name_font_size, name_lines = get_name_lines_for_width(data.name, max_text_width)
 
     font_name_company = "Helvetica"
-    font_size_company = 10
+    font_size_company = 13
     company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
     if len(company_lines) > 3:
-        font_size_company = 7
+        font_size_company = 9
         company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
     elif len(company_lines) > 2:
-        font_size_company = 8
+        font_size_company = 11
         company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
 
-    role_font_size = 16
-    qr_size = 0.85 * inch
-    qr_box_pad = 0.02 * inch  # tight padding inside QR box
-    qr_box_size = qr_size + 2 * qr_box_pad
+    role_text = data.ticket_type or ""
+    if "conference" in role_text.lower():
+        role_text = "DELEGATE"
+
+    role_font_size, role_lines = get_role_lines_for_width(role_text, max_text_width)
+    qr_size = 1.15 * inch
 
     name_line_h = (name_font_size + 3) / 72 * inch
     company_line_h = (font_size_company + 3) / 72 * inch
     role_line_h = (role_font_size + 3) / 72 * inch
-    gap = 0.14 * inch  # padding between sections
+    gap = 0.07 * inch  # padding between sections
+    bottom_margin = 0.06 * inch
 
     total_h = (
         len(name_lines) * name_line_h +
         gap +
         len(company_lines) * company_line_h +
         gap +
-        qr_box_size +
+        qr_size +
         gap +
-        role_line_h
+        len(role_lines) * role_line_h +
+        bottom_margin
     )
 
-    # Center block vertically
-    start_y = (h + total_h) / 2
+    # Anchor block to the bottom margin so VISITOR has consistent gap from edge.
+    start_y = total_h + (h - total_h) / 2 - bottom_margin
+    if start_y > h:
+        start_y = h
 
     current_y = start_y
 
@@ -208,19 +251,18 @@ def generate_ticket_pdf(path: Path, data: TicketPayload):
         current_y -= company_line_h
     current_y -= gap
 
-    # --- RENDER: 3. QR box + QR ---
-    qr_box_x = (w - qr_box_size) / 2
-    qr_box_y = current_y - qr_box_size
-    c.setStrokeColorRGB(0.2, 0.2, 0.2)
-    c.setLineWidth(0.5)
-    c.rect(qr_box_x, qr_box_y, qr_box_size, qr_box_size)
+    # --- RENDER: 3. QR (no border box) ---
+    qr_x = (w - qr_size) / 2
+    qr_y = current_y - qr_size
     qr_img = generate_qr_image(data.ticket_id)
-    c.drawImage(qr_img, qr_box_x + qr_box_pad, qr_box_y + qr_box_pad, width=qr_size, height=qr_size)
-    current_y = qr_box_y - gap
+    c.drawImage(qr_img, qr_x, qr_y, width=qr_size, height=qr_size)
+    current_y = qr_y - gap
 
     # --- RENDER: 4. Role ---
     c.setFont("Helvetica-Bold", role_font_size)
-    c.drawCentredString(w / 2, current_y - role_line_h, data.ticket_type.upper())
+    for line in role_lines:
+        c.drawCentredString(w / 2, current_y - role_line_h, line)
+        current_y -= role_line_h
 
     c.showPage()
     c.save()

@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Event Printer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --line: #232838;
+    --text: #e7ecf3;
+    --muted: #8a93a6;
+    --accent: #6aa9ff;
+    --accent-strong: #4f8ef7;
+    --ok: #4ade80;
+    --warn: #facc15;
+    --err: #f87171;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; height: 100%; }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid var(--line); background: var(--panel); flex-shrink: 0; }
+  .topbar h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(74,222,128,.18); }
+  .dot.err { background: var(--err); box-shadow: 0 0 0 4px rgba(248,113,113,.18); }
+
+  main { flex: 1; display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px; min-height: 0; }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
+
+  .col { display: flex; flex-direction: column; gap: 16px; min-height: 0; min-width: 0; }
+  .col.sidebar { overflow-y: auto; }
+  .col.preview-col { min-height: 320px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .card.flex { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 0; overflow: hidden; }
+  .card h2 { margin: 0 0 12px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .card.flex > .card-head { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .card.flex > .card-head h2 { margin: 0; }
+  .card.flex > .card-body { flex: 1; min-height: 0; overflow: hidden; background: #2a2f3d; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card.flex img.preview-img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.4); border-radius: 4px; }
+  .preview-empty { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+
+  .info { display: grid; gap: 8px; font-size: 13px; }
+  .info .row { display: flex; justify-content: space-between; gap: 12px; }
+  .info .row span:first-child { color: var(--muted); }
+  .info .row span:last-child { color: var(--text); font-weight: 500; word-break: break-all; text-align: right; }
+
+  form { display: grid; gap: 10px; }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  input, select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(106,169,255,.18); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { background: var(--accent-strong); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, transform .05s; }
+  button:hover { background: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  button.icon { padding: 6px 10px; font-size: 12px; }
+  button[disabled] { opacity: .5; cursor: not-allowed; }
+
+  .log { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11px; color: var(--muted); max-height: 160px; overflow: auto; }
+  .log .entry { display: flex; gap: 6px; padding: 1px 0; }
+  .log .ok { color: var(--ok); }
+  .log .err { color: var(--err); }
+  .log .ts { color: var(--muted); flex-shrink: 0; }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Event Printer</h1>
+      <div class="sub">Local print server &middot; <span id="port">…</span></div>
+    </div>
+    <div class="status"><span class="dot" id="health-dot"></span><span id="health-text">checking…</span></div>
+  </header>
+
+  <main>
+    <div class="col sidebar">
+      <section class="card">
+        <h2>Print badge</h2>
+        <form id="ticket-form" onsubmit="printTicket(event)">
+          <label>Ticket ID
+            <input id="f-ticket" required placeholder="A1-0245" />
+          </label>
+          <label>Name
+            <input id="f-name" required placeholder="Mohamed Rafi" />
+          </label>
+          <label>Company
+            <input id="f-company" placeholder="MISC Berhad" />
+          </label>
+          <label>Type
+            <select id="f-type">
+              <option>Visitor</option>
+              <option>Delegate</option>
+              <option>Speaker</option>
+              <option>Staff</option>
+              <option>VIP</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button type="submit">Print</button>
+            <button type="button" class="ghost" onclick="updatePreview()">Refresh preview</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Status</h2>
+        <div class="info">
+          <div class="row"><span>Printer</span><span id="info-printer">—</span></div>
+          <div class="row"><span>Default</span><span id="info-default">—</span></div>
+          <div class="row"><span>Output</span><span id="info-outdir">—</span></div>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button class="ghost icon" onclick="refresh()">Refresh</button>
+          <button class="ghost icon" onclick="testPrint()">Test print</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Server</h2>
+        <div class="info">
+          <div class="row"><span>PID</span><span id="info-pid">—</span></div>
+          <div class="row"><span>Uptime</span><span id="info-uptime">—</span></div>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button class="ghost icon" onclick="restartServer()">Restart</button>
+          <button class="ghost icon" onclick="quitServer()">Quit</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Activity</h2>
+        <div class="log" id="log"></div>
+      </section>
+    </div>
+
+    <div class="col preview-col">
+      <section class="card flex">
+        <div class="card-head">
+          <h2>Preview</h2>
+          <span class="sub" id="preview-status">—</span>
+        </div>
+        <div class="card-body">
+          <div class="preview-empty" id="preview-empty">Click <strong>Refresh preview</strong> to render the badge.</div>
+          <img id="preview-img" class="preview-img" style="display:none" alt="Badge preview" />
+        </div>
+      </section>
+    </div>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const log = (msg, kind = "") => {
+    const el = $("log");
+    const time = new Date().toLocaleTimeString();
+    const line = document.createElement("div");
+    line.className = "entry";
+    const ts = document.createElement("span");
+    ts.className = "ts";
+    ts.textContent = "[" + time + "]";
+    const body = document.createElement("span");
+    if (kind) body.className = kind;
+    body.textContent = msg;
+    line.append(ts, body);
+    el.prepend(line);
+  };
+
+  async function refresh() {
+    try {
+      const r = await fetch("/health");
+      const j = await r.json();
+      $("info-printer").textContent = j.printer || "—";
+      $("info-outdir").textContent = j.output_dir || "—";
+      $("port").textContent = location.host;
+      $("health-dot").className = "dot ok";
+      $("health-text").textContent = "online";
+    } catch (e) {
+      $("health-dot").className = "dot err";
+      $("health-text").textContent = "offline";
+      log("health check failed: " + e, "err");
+    }
+    try {
+      const r = await fetch("/printers");
+      const j = await r.json();
+      $("info-default").textContent = j.default_printer || "—";
+    } catch (e) { /* ignore */ }
+    try {
+      const r = await fetch("/server/status");
+      const j = await r.json();
+      $("info-pid").textContent = j.pid;
+      $("info-uptime").textContent = formatUptime(j.uptime_seconds);
+    } catch (e) { /* ignore */ }
+  }
+
+  function formatUptime(sec) {
+    if (sec == null) return "—";
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return h + "h " + m + "m";
+    if (m) return m + "m " + s + "s";
+    return s + "s";
+  }
+
+  let lastPreviewBlobUrl = null;
+
+  function buildPayload(forPreview) {
+    const ticket = $("f-ticket").value.trim();
+    const name = $("f-name").value.trim();
+    return {
+      ticket_id: ticket || (forPreview ? "PREVIEW" : ""),
+      name: name || (forPreview ? "Sample Name" : ""),
+      company: $("f-company").value.trim() || null,
+      ticket_type: $("f-type").value,
+    };
+  }
+
+  async function updatePreview() {
+    const payload = buildPayload(true);
+    $("preview-status").textContent = "rendering…";
+    try {
+      const r = await fetch("/png-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        $("preview-status").textContent = "error";
+        log("preview failed: " + r.status, "err");
+        return;
+      }
+      const blob = await r.blob();
+      if (lastPreviewBlobUrl) URL.revokeObjectURL(lastPreviewBlobUrl);
+      lastPreviewBlobUrl = URL.createObjectURL(blob);
+      const img = $("preview-img");
+      img.src = lastPreviewBlobUrl;
+      img.style.display = "";
+      $("preview-empty").style.display = "none";
+      $("preview-status").textContent = "ok";
+    } catch (e) {
+      $("preview-status").textContent = "error";
+      log("preview failed: " + e, "err");
+    }
+  }
+
+  async function testPrint() {
+    log("sending test print…");
+    try {
+      const r = await fetch("/print-test", { method: "POST" });
+      const j = await r.json();
+      if (r.ok) log("test printed: " + (j.print_job?.job_id || "ok"), "ok");
+      else log("test failed: " + (j.detail || r.status), "err");
+    } catch (e) { log("test failed: " + e, "err"); }
+  }
+
+  async function printTicket(ev) {
+    ev.preventDefault();
+    const payload = buildPayload(false);
+    log("printing " + payload.ticket_id + " (" + payload.name + ")…");
+    try {
+      const r = await fetch("/print-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (r.ok) log("printed " + payload.ticket_id, "ok");
+      else log("print failed: " + (j.detail || r.status), "err");
+    } catch (e) { log("print failed: " + e, "err"); }
+  }
+
+  async function restartServer() {
+    if (!confirm("Restart the server? Active jobs will be interrupted.")) return;
+    log("restart requested…");
+    try {
+      const r = await fetch("/server/restart", { method: "POST" });
+      if (r.ok) {
+        log("server restarting…", "ok");
+        let tries = 0;
+        const iv = setInterval(async () => {
+          tries++;
+          try {
+            const h = await fetch("/health");
+            if (h.ok) { clearInterval(iv); log("server back online", "ok"); refresh(); }
+          } catch (e) { /* still down */ }
+          if (tries > 50) { clearInterval(iv); log("restart timeout — refresh manually", "err"); }
+        }, 500);
+      } else {
+        log("restart failed: " + r.status, "err");
+      }
+    } catch (e) { log("restart failed: " + e, "err"); }
+  }
+
+  async function quitServer() {
+    if (!confirm("Quit the server? The window will close.")) return;
+    log("shutting down…");
+    try { await fetch("/server/quit", { method: "POST" }); } catch (e) { /* expected */ }
+    setTimeout(() => { try { window.close(); } catch (e) {} }, 600);
+  }
+
+  refresh().then(() => log("dashboard ready", "ok"));
+  setInterval(refresh, 15000);
+</script>
+</body>
+</html>

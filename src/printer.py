@@ -76,7 +76,7 @@ def _rasterize_pdf_for_zebra(pdf_path: str) -> str:
     target_w = round(pix.width / 2)
     target_h = round(pix.height / 2)
     lo = hi.resize((target_w, target_h), Image.Resampling.LANCZOS)
-    bw = lo.point(lambda p: 0 if p < 200 else 255, mode="1")
+    bw = lo.point(lambda p: 0 if p < 220 else 255, mode="1")
     out_path = os.path.splitext(pdf_path)[0] + "-print.png"
     bw.save(out_path, "PNG", dpi=(target_dpi, target_dpi))
     doc.close()
