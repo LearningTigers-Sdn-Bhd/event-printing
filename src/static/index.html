@@ -68,7 +68,25 @@
   .log .entry { display: flex; gap: 6px; padding: 1px 0; }
   .log .ok { color: var(--ok); }
   .log .err { color: var(--err); }
+  .log .warn { color: var(--warn); }
   .log .ts { color: var(--muted); flex-shrink: 0; }
+
+  .disclaimer { font-size: 11px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; line-height: 1.5; margin-bottom: 4px; }
+
+  .scan-history { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 420px; overflow-y: auto; }
+  .scan-history:empty { display: none; }
+  .result-box { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .result-box.already-scanned { border-color: var(--warn); }
+  .result-box.error { border-color: var(--err); }
+  .result-box.success { border-color: var(--ok); }
+  .result-box.scanning { border-color: var(--accent); opacity: .7; }
+  .result-status { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+  .result-status .label { }
+  .result-status .ts-small { font-size: 10px; font-weight: 400; color: var(--muted); }
+  .result-status.ok .label { color: var(--ok); }
+  .result-status.warn .label { color: var(--warn); }
+  .result-status.err .label { color: var(--err); }
+  .result-status.info .label { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -99,8 +117,12 @@
               <option>Visitor</option>
               <option>Delegate</option>
               <option>Speaker</option>
+              <option>Moderator</option>
               <option>Staff</option>
+              <option>Organizer</option>
+              <option>Exhibitor</option>
               <option>VIP</option>
+              <option>VVIP</option>
             </select>
           </label>
           <div class="actions">
@@ -108,6 +130,42 @@
             <button type="button" class="ghost" onclick="updatePreview()">Refresh preview</button>
           </div>
         </form>
+      </section>
+
+      <section class="card">
+        <h2>Backend</h2>
+        <p class="disclaimer">To enable scan-and-print, enter your backend credentials below. All three fields are required. To disable scanning, click Reset to clear all credentials.</p>
+        <form id="config-form" onsubmit="saveConfig(event)">
+          <label>Base URL
+            <input id="cfg-url" placeholder="https://app.eventzflow.com" autocomplete="off" />
+          </label>
+          <label>Event slug
+            <input id="cfg-slug" placeholder="my-event-2026" autocomplete="off" />
+          </label>
+          <label>API key <span id="cfg-key-state" style="float:right;color:var(--muted);font-weight:400;"></span>
+            <input id="cfg-key" type="password" placeholder="(leave blank to keep existing)" autocomplete="off" />
+          </label>
+          <div class="actions">
+            <button type="submit">Save</button>
+            <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
+            <button type="button" class="ghost" style="color:var(--err);border-color:var(--err);" onclick="resetConfig()">Reset</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Scan</h2>
+        <form id="scan-form" onsubmit="scanTicket(event)">
+          <label>Ticket ID
+            <input id="scan-input" placeholder="Scan QR or paste public_id" autocomplete="off" />
+          </label>
+          <div class="actions">
+            <button type="submit" id="scan-btn">Print &amp; check in</button>
+            <button type="button" class="ghost" onclick="focusScan()">Focus</button>
+            <button type="button" class="ghost icon" onclick="clearHistory()" title="Clear history">Clear</button>
+          </div>
+        </form>
+        <div id="scan-history" class="scan-history"></div>
       </section>
 
       <section class="card">
@@ -305,8 +363,287 @@
     setTimeout(() => { try { window.close(); } catch (e) {} }, 600);
   }
 
-  refresh().then(() => log("dashboard ready", "ok"));
+  refresh().then(() => { log("dashboard ready", "ok"); loadConfig(); focusScan(); });
   setInterval(refresh, 15000);
+
+  // --- Backend config ---
+
+  async function loadConfig() {
+    try {
+      const r = await fetch("/config");
+      const j = await r.json();
+      $("cfg-url").value = j.backend_url || "";
+      $("cfg-slug").value = j.event_slug || "";
+      $("cfg-key").value = "";
+      const stateEl = $("cfg-key-state");
+      stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
+      updateScanState(j);
+    } catch (e) {
+      log("config load failed: " + e, "err");
+    }
+  }
+
+  function updateScanState(cfg) {
+    const ready = cfg.backend_url && cfg.event_slug && cfg.api_key_set;
+    const btn = $("scan-btn");
+    const input = $("scan-input");
+    if (!ready) {
+      btn.disabled = true;
+      input.disabled = true;
+      input.placeholder = "Configure backend first";
+    } else if (!_scanInFlight) {
+      btn.disabled = false;
+      input.disabled = false;
+      input.placeholder = "Scan QR or paste public_id";
+    }
+  }
+
+  async function saveConfig(ev) {
+    ev.preventDefault();
+    const body = {
+      backend_url: $("cfg-url").value.trim(),
+      event_slug: $("cfg-slug").value.trim(),
+    };
+    const key = $("cfg-key").value.trim();
+    if (key) body.api_key = key;
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { log("config save failed: " + (j.detail || r.status), "err"); return; }
+      log("backend config saved", "ok");
+      $("cfg-key").value = "";
+      const stateEl = $("cfg-key-state");
+      stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
+      updateScanState(j);
+    } catch (e) {
+      log("config save failed: " + e, "err");
+    }
+  }
+
+  async function resetConfig() {
+    if (!confirm("Clear all backend credentials? Scanning will be disabled until you re-enter them.")) return;
+    try {
+      const r = await fetch("/config", { method: "DELETE" });
+      const j = await r.json();
+      if (!r.ok) { log("config reset failed: " + (j.detail || r.status), "err"); return; }
+      $("cfg-url").value = "";
+      $("cfg-slug").value = "";
+      $("cfg-key").value = "";
+      $("cfg-key-state").textContent = "not set";
+      updateScanState(j);
+      clearHistory();
+      log("backend credentials cleared", "ok");
+    } catch (e) {
+      log("config reset failed: " + e, "err");
+    }
+  }
+
+  // --- Scan ---
+
+  let _scanInFlight = false;
+  let _scanQueue = [];
+  const _recentScans = new Map();
+  const DEDUP_MS = 3000;
+
+  function focusScan() {
+    const el = $("scan-input");
+    if (el && !el.disabled) el.focus();
+  }
+
+  function clearHistory() {
+    const el = $("scan-history");
+    while (el.firstChild) el.removeChild(el.firstChild);
+    _recentScans.clear();
+    _scanQueue = [];
+  }
+
+  function _makeResultBox(statusLabel, statusKind, boxKind) {
+    const box = document.createElement("div");
+    box.className = "result-box " + boxKind;
+    const statusEl = document.createElement("div");
+    statusEl.className = "result-status " + statusKind;
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.textContent = statusLabel;
+    const tsEl = document.createElement("span");
+    tsEl.className = "ts-small";
+    tsEl.textContent = new Date().toLocaleTimeString();
+    statusEl.append(labelEl, tsEl);
+    box.appendChild(statusEl);
+    return box;
+  }
+
+  function _appendInfoRows(box, rows) {
+    const infoEl = document.createElement("div");
+    infoEl.className = "info";
+    rows.forEach(([k, v]) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const kEl = document.createElement("span"); kEl.textContent = k;
+      const vEl = document.createElement("span"); vEl.textContent = v;
+      row.append(kEl, vEl);
+      infoEl.appendChild(row);
+    });
+    box.appendChild(infoEl);
+  }
+
+  function prependHistory(box) {
+    const el = $("scan-history");
+    el.insertBefore(box, el.firstChild);
+  }
+
+  function renderScanSuccess(j) {
+    const t = j.ticket || {};
+    const box = _makeResultBox("Printed & checked in", "ok", "success");
+    const rows = [];
+    if (t.name) rows.push(["Name", t.name]);
+    if (t.ticket_id) rows.push(["Ticket", t.ticket_id]);
+    if (t.ticket_type) rows.push(["Type", t.ticket_type]);
+    if (t.company) rows.push(["Company", t.company]);
+    _appendInfoRows(box, rows);
+    prependHistory(box);
+  }
+
+  function renderAlreadyScanned(j) {
+    const t = j.ticket || {};
+    const box = _makeResultBox("Already checked in", "warn", "already-scanned");
+    const rows = [];
+    if (t.name) rows.push(["Name", t.name]);
+    if (t.ticket_id) rows.push(["Ticket", t.ticket_id]);
+    if (t.ticket_type) rows.push(["Type", t.ticket_type]);
+    if (t.company) rows.push(["Company", t.company]);
+    _appendInfoRows(box, rows);
+    const reprintBtn = document.createElement("button");
+    reprintBtn.textContent = "Reprint badge";
+    reprintBtn.className = "ghost";
+    reprintBtn.style.cssText = "margin-top:10px;color:var(--warn);border-color:var(--warn);width:100%;";
+    const pid = t.ticket_id;
+    reprintBtn.onclick = () => reprintTicket(pid, reprintBtn);
+    box.appendChild(reprintBtn);
+    prependHistory(box);
+  }
+
+  function renderScanError(publicId, msg) {
+    const box = _makeResultBox("Error — " + publicId, "err", "error");
+    const msgEl = document.createElement("div");
+    msgEl.style.cssText = "font-size:12px;color:var(--err);margin-top:4px;";
+    msgEl.textContent = msg;
+    box.appendChild(msgEl);
+    prependHistory(box);
+  }
+
+  function renderScanning(publicId) {
+    const box = _makeResultBox("Scanning " + publicId + "…", "info", "scanning");
+    prependHistory(box);
+    return box;
+  }
+
+  async function _processScan(publicId) {
+    const lastScan = _recentScans.get(publicId);
+    if (lastScan && Date.now() - lastScan < DEDUP_MS) {
+      log("duplicate ignored: " + publicId, "warn");
+      return;
+    }
+    const placeholder = renderScanning(publicId);
+    log("scanning " + publicId + "…");
+    try {
+      const r = await fetch("/scan/" + encodeURIComponent(publicId), { method: "POST" });
+      const j = await r.json();
+      if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+      if (!r.ok) {
+        renderScanError(publicId, j.detail || ("Error " + r.status));
+        log("scan failed: " + (j.detail || r.status), "err");
+      } else if (j.already_scanned) {
+        renderAlreadyScanned(j);
+        log("already scanned: " + publicId, "warn");
+        _recentScans.set(publicId, Date.now());
+      } else {
+        renderScanSuccess(j);
+        log("printed + checked in: " + (j.ticket?.ticket_id || publicId), "ok");
+        _recentScans.set(publicId, Date.now());
+      }
+    } catch (e) {
+      if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+      renderScanError(publicId, String(e));
+      log("scan error: " + e, "err");
+    }
+  }
+
+  async function _drainQueue() {
+    while (_scanQueue.length > 0) {
+      await _processScan(_scanQueue.shift());
+    }
+    _scanInFlight = false;
+    $("scan-btn").disabled = false;
+    $("scan-input").disabled = false;
+    $("scan-input").placeholder = "Scan QR or paste public_id";
+    focusScan();
+  }
+
+  async function scanTicket(ev) {
+    ev.preventDefault();
+    const publicId = $("scan-input").value.trim();
+    if (!publicId) {
+      const input = $("scan-input");
+      const prev = input.placeholder;
+      input.placeholder = "Waiting for scan…";
+      input.style.borderColor = "var(--warn)";
+      setTimeout(() => {
+        input.placeholder = "Scan QR or paste public_id";
+        input.style.borderColor = "";
+      }, 1500);
+      return;
+    }
+    // Clear + briefly disable so scanner buffer doesn't bleed into next read
+    $("scan-input").value = "";
+    $("scan-input").disabled = true;
+    $("scan-input").placeholder = "Please wait…";
+    setTimeout(() => {
+      $("scan-input").disabled = _scanInFlight ? true : false;
+      if (!$("scan-input").disabled) {
+        $("scan-input").placeholder = "Scan QR or paste public_id";
+        focusScan();
+      }
+    }, 80);
+    if (_scanInFlight) {
+      _scanQueue.push(publicId);
+      log("queued: " + publicId);
+      return;
+    }
+    _scanInFlight = true;
+    $("scan-btn").disabled = true;
+    $("scan-input").disabled = true;
+    await _processScan(publicId);
+    await _drainQueue();
+  }
+
+  async function reprintTicket(publicId, btn) {
+    if (!publicId) return;
+    btn.disabled = true;
+    btn.textContent = "Reprinting…";
+    log("reprinting " + publicId + "…");
+    try {
+      const r = await fetch("/scan/" + encodeURIComponent(publicId) + "/reprint", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) {
+        const msg = j.detail || ("Error " + r.status);
+        log("reprint failed: " + msg, "err");
+        btn.disabled = false;
+        btn.textContent = "Reprint badge";
+      } else {
+        log("reprinted: " + publicId, "ok");
+        btn.textContent = "Reprinted";
+      }
+    } catch (e) {
+      log("reprint error: " + e, "err");
+      btn.disabled = false;
+      btn.textContent = "Reprint badge";
+    }
+  }
 </script>
 </body>
 </html>
