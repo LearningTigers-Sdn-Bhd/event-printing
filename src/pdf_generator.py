@@ -173,6 +173,13 @@ def get_role_lines_for_width(role: str, max_width: float):
     return 11, wrap_text_to_width(role_upper, font_name, 11, max_width)
 
 
+def normalize_role_text(role_text: str) -> str:
+    role_text_lower = role_text.lower()
+    if "conference" in role_text_lower or "delegate" in role_text_lower:
+        return "DELEGATE"
+    return role_text
+
+
 def generate_qr_image(data: str) -> ImageReader:
     qr = qrcode.QRCode(box_size=4, border=2)
     qr.add_data(data)
@@ -205,9 +212,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload):
         font_size_company = 11
         company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
 
-    role_text = data.ticket_type or ""
-    if "conference" in role_text.lower():
-        role_text = "DELEGATE"
+    role_text = normalize_role_text(data.ticket_type or "")
 
     role_font_size, role_lines = get_role_lines_for_width(role_text, max_text_width)
     qr_size = 1.15 * inch
@@ -221,11 +226,11 @@ def generate_ticket_pdf(path: Path, data: TicketPayload):
     total_h = (
         len(name_lines) * name_line_h +
         gap +
+        len(role_lines) * role_line_h +
+        gap +
         len(company_lines) * company_line_h +
         gap +
         qr_size +
-        gap +
-        len(role_lines) * role_line_h +
         bottom_margin
     )
 
@@ -244,25 +249,25 @@ def generate_ticket_pdf(path: Path, data: TicketPayload):
         current_y -= name_line_h
     current_y -= gap
 
-    # --- RENDER: 2. Company ---
+    # --- RENDER: 2. Role ---
+    c.setFont("Helvetica-Bold", role_font_size)
+    for line in role_lines:
+        c.drawCentredString(w / 2, current_y - role_line_h, line)
+        current_y -= role_line_h
+    current_y -= gap
+
+    # --- RENDER: 3. Company ---
     c.setFont(font_name_company, font_size_company)
     for line in company_lines:
         c.drawCentredString(w / 2, current_y - company_line_h, line)
         current_y -= company_line_h
     current_y -= gap
 
-    # --- RENDER: 3. QR (no border box) ---
+    # --- RENDER: 4. QR (no border box) ---
     qr_x = (w - qr_size) / 2
     qr_y = current_y - qr_size
     qr_img = generate_qr_image(data.ticket_id)
     c.drawImage(qr_img, qr_x, qr_y, width=qr_size, height=qr_size)
-    current_y = qr_y - gap
-
-    # --- RENDER: 4. Role ---
-    c.setFont("Helvetica-Bold", role_font_size)
-    for line in role_lines:
-        c.drawCentredString(w / 2, current_y - role_line_h, line)
-        current_y -= role_line_h
 
     c.showPage()
     c.save()

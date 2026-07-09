@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing import Optional, Any
 
 
@@ -10,11 +10,21 @@ def _sanitize_str(v: Any, max_len: int = 200) -> Optional[str]:
 
 
 class TicketPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     ticket_id: str = Field(..., max_length=100, example="A1-0245")
     name: str = Field(..., max_length=200, example="Fazli")
     company: Optional[str] = Field(default=None, max_length=200, example="Fazli Corp.")
     title: Optional[str] = Field(default=None, max_length=200, example="CEO")
     ticket_type: str = Field(..., max_length=100, example="Delegate")
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_organisation_to_company(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data.get("company"):
+            data = dict(data)
+            data["company"] = data.get("organisation") or data.get("organization")
+        return data
 
     @field_validator("ticket_id", "name", "ticket_type", mode="before")
     @classmethod
