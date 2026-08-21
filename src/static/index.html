@@ -177,7 +177,7 @@
         <form id="layout-form" onsubmit="saveLayout(event)">
           <label>Paper size
             <select id="lay-preset" onchange="applyPaperPreset()">
-              <option value="sticker">Sticker — 80 × 100 mm</option>
+              <option value="sticker">Sticker — 100 × 80 mm</option>
               <option value="card">Badge card — 155 × 104 mm</option>
               <option value="custom">Custom…</option>
             </select>
@@ -342,7 +342,7 @@
   let layoutElements = []; // ordered, enabled elements
 
   const PAPER_PRESETS = {
-    sticker: { width_mm: 80, height_mm: 100 },
+    sticker: { width_mm: 100, height_mm: 80 },
     card: { width_mm: 155, height_mm: 104 },
   };
 
