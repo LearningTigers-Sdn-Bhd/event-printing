@@ -294,7 +294,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
 
     # --- Render ---
     current_y = start_y
-    c.setFillColorRGB(0.1, 0.1, 0.1)
+    c.setFillColorRGB(0, 0, 0)  # pure black: printer is 1-bit, any grey gets halftone-dithered into dots
     for i, item in enumerate(items):
         if i > 0:
             current_y -= gap

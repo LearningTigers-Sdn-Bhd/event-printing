@@ -158,6 +158,10 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
                 # Resize for printing
                 bmp_resized = bmp.resize((width, height), Image.Resampling.LANCZOS)
                 
+                # Printer is 1-bit: threshold here or the driver halftone-dithers
+                # the grey anti-aliased edges into visible dots on the text.
+                bmp_resized = bmp_resized.convert('L').point(lambda v: 0 if v < 220 else 255, mode='1')
+
                 # Save resized version
                 bmp_resized.save(tmp_path, 'BMP')
                 
