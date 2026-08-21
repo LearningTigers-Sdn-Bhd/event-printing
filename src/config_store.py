@@ -8,6 +8,42 @@ from typing import Any, Dict, Optional
 
 _APP_NAME = "event-printer"
 
+VALID_ELEMENTS = ("name", "role", "company", "title", "country", "table_no", "qr")
+
+DEFAULT_LAYOUT = {
+    "paper": {"width_mm": 100.0, "height_mm": 80.0},
+    "elements": ["name", "role", "company", "qr"],
+}
+
+
+def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
+    """Validate a layout dict; returns normalized layout or None if invalid."""
+    if not isinstance(value, dict):
+        return None
+    paper = value.get("paper")
+    if not isinstance(paper, dict):
+        return None
+    try:
+        width_mm = float(paper.get("width_mm"))
+        height_mm = float(paper.get("height_mm"))
+    except (TypeError, ValueError):
+        return None
+    if not (20 <= width_mm <= 500 and 20 <= height_mm <= 500):
+        return None
+    elements_raw = value.get("elements")
+    if not isinstance(elements_raw, list):
+        return None
+    elements = []
+    for el in elements_raw:
+        if isinstance(el, str) and el in VALID_ELEMENTS and el not in elements:
+            elements.append(el)
+    if not elements:
+        return None
+    return {
+        "paper": {"width_mm": width_mm, "height_mm": height_mm},
+        "elements": elements,
+    }
+
 
 def _config_dir() -> Path:
     system = platform.system()
@@ -29,6 +65,7 @@ def _defaults() -> Dict[str, Any]:
         "backend_url": os.environ.get("EVENTZ_BACKEND_URL", ""),
         "event_slug": os.environ.get("EVENTZ_EVENT_SLUG", ""),
         "api_key": os.environ.get("EVENTZ_API_KEY", ""),
+        "layout": json.loads(json.dumps(DEFAULT_LAYOUT)),
     }
 
 
@@ -39,9 +76,12 @@ def load() -> Dict[str, Any]:
         try:
             with path.open("r", encoding="utf-8") as f:
                 stored = json.load(f) or {}
-            for key in data:
+            for key in ("backend_url", "event_slug", "api_key"):
                 if key in stored and isinstance(stored[key], str):
                     data[key] = stored[key]
+            layout = _sanitize_layout(stored.get("layout"))
+            if layout:
+                data["layout"] = layout
         except (OSError, json.JSONDecodeError):
             pass
     return data
@@ -53,6 +93,10 @@ def save(values: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("backend_url", "event_slug", "api_key"):
         if key in values and isinstance(values[key], str):
             current[key] = values[key].strip()
+    if "layout" in values:
+        layout = _sanitize_layout(values["layout"])
+        if layout:
+            current["layout"] = layout
 
     path = config_path()
     # Create dir with 0700 so only owner can list/read it
@@ -95,4 +139,5 @@ def public_view(values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "api_key_masked": masked_key,
         "api_key_set": bool(api_key),
         "config_path": str(config_path()),
+        "layout": values.get("layout") or json.loads(json.dumps(DEFAULT_LAYOUT)),
     }

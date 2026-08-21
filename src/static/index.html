@@ -87,6 +87,15 @@
   .result-status.warn .label { color: var(--warn); }
   .result-status.err .label { color: var(--err); }
   .result-status.info .label { color: var(--accent); }
+
+  .layout-el { display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+  .layout-el.off { opacity: .45; }
+  .layout-el .el-label { flex: 1; }
+  .layout-el .el-btns { display: flex; gap: 4px; }
+  .layout-el button { padding: 2px 8px; font-size: 12px; background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+  .layout-el button:hover { border-color: var(--accent); color: var(--accent); }
+  .layout-list { display: grid; gap: 6px; }
+  .paper-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 </style>
 </head>
 <body>
@@ -111,6 +120,15 @@
           </label>
           <label>Company
             <input id="f-company" placeholder="MISC Berhad" />
+          </label>
+          <label>Position
+            <input id="f-title" placeholder="CEO" />
+          </label>
+          <label>Country
+            <input id="f-country" placeholder="Malaysia" />
+          </label>
+          <label>Table No.
+            <input id="f-table" placeholder="12" />
           </label>
           <label>Type
             <select id="f-type">
@@ -149,6 +167,26 @@
             <button type="submit">Save</button>
             <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
             <button type="button" class="ghost" style="color:var(--err);border-color:var(--err);" onclick="resetConfig()">Reset</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Layout</h2>
+        <p class="disclaimer">Badge layout for this event. Set the paper size, tick the fields to print, and reorder them top-to-bottom. Saved on this machine.</p>
+        <form id="layout-form" onsubmit="saveLayout(event)">
+          <div class="paper-row">
+            <label>Width (mm)
+              <input id="lay-w" type="number" min="20" max="500" step="0.1" required />
+            </label>
+            <label>Height (mm)
+              <input id="lay-h" type="number" min="20" max="500" step="0.1" required />
+            </label>
+          </div>
+          <div class="layout-list" id="layout-list"></div>
+          <div class="actions">
+            <button type="submit">Save layout</button>
+            <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
           </div>
         </form>
       </section>
@@ -276,8 +314,108 @@
       ticket_id: ticket || (forPreview ? "PREVIEW" : ""),
       name: name || (forPreview ? "Sample Name" : ""),
       company: $("f-company").value.trim() || null,
+      title: $("f-title").value.trim() || null,
+      country: $("f-country").value.trim() || null,
+      table_no: $("f-table").value.trim() || null,
       ticket_type: $("f-type").value,
     };
+  }
+
+  // --- Layout editor ---
+
+  const EL_LABELS = {
+    name: "Name",
+    role: "Role / ticket type",
+    company: "Company",
+    title: "Position",
+    country: "Country",
+    table_no: "Table No.",
+    qr: "QR code",
+  };
+  let layoutElements = []; // ordered, enabled elements
+
+  function renderLayoutEditor(layout) {
+    if (layout && layout.paper) {
+      $("lay-w").value = layout.paper.width_mm;
+      $("lay-h").value = layout.paper.height_mm;
+      layoutElements = (layout.elements || []).filter((e) => EL_LABELS[e]);
+    }
+    const list = $("layout-list");
+    list.innerHTML = "";
+    const disabled = Object.keys(EL_LABELS).filter((e) => !layoutElements.includes(e));
+    layoutElements.forEach((el, i) => {
+      list.appendChild(layoutRow(el, true, i));
+    });
+    disabled.forEach((el) => list.appendChild(layoutRow(el, false, -1)));
+  }
+
+  function layoutRow(el, enabled, idx) {
+    const row = document.createElement("div");
+    row.className = "layout-el" + (enabled ? "" : " off");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = enabled;
+    cb.onchange = () => {
+      if (cb.checked) layoutElements.push(el);
+      else layoutElements = layoutElements.filter((e) => e !== el);
+      renderLayoutEditor();
+    };
+    const label = document.createElement("span");
+    label.className = "el-label";
+    label.textContent = EL_LABELS[el];
+    row.appendChild(cb);
+    row.appendChild(label);
+    if (enabled) {
+      const btns = document.createElement("div");
+      btns.className = "el-btns";
+      const up = document.createElement("button");
+      up.type = "button";
+      up.textContent = "↑";
+      up.disabled = idx === 0;
+      up.onclick = () => { swapEl(idx, idx - 1); };
+      const down = document.createElement("button");
+      down.type = "button";
+      down.textContent = "↓";
+      down.disabled = idx === layoutElements.length - 1;
+      down.onclick = () => { swapEl(idx, idx + 1); };
+      btns.appendChild(up);
+      btns.appendChild(down);
+      row.appendChild(btns);
+    }
+    return row;
+  }
+
+  function swapEl(a, b) {
+    [layoutElements[a], layoutElements[b]] = [layoutElements[b], layoutElements[a]];
+    renderLayoutEditor();
+  }
+
+  async function saveLayout(ev) {
+    ev.preventDefault();
+    if (!layoutElements.length) { log("layout needs at least one field", "err"); return; }
+    const body = {
+      layout: {
+        paper: {
+          width_mm: parseFloat($("lay-w").value),
+          height_mm: parseFloat($("lay-h").value),
+        },
+        elements: layoutElements,
+      },
+    };
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { log("layout save failed: " + (j.detail || r.status), "err"); return; }
+      log("layout saved", "ok");
+      renderLayoutEditor(j.layout);
+      updatePreview();
+    } catch (e) {
+      log("layout save failed: " + e, "err");
+    }
   }
 
   async function updatePreview() {
@@ -378,6 +516,7 @@
       const stateEl = $("cfg-key-state");
       stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
       updateScanState(j);
+      renderLayoutEditor(j.layout);
     } catch (e) {
       log("config load failed: " + e, "err");
     }

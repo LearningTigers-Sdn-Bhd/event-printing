@@ -8,6 +8,8 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 
 from models import TicketPayload # Import the model
+from config_store import DEFAULT_LAYOUT
+import config_store
 
 def generate_test_pdf(path: Path) -> str:
     """Generates a simple test PDF file for printer pipeline dry run."""
@@ -191,83 +193,122 @@ def generate_qr_image(data: str) -> ImageReader:
     return ImageReader(buf)
 
 
-def generate_ticket_pdf(path: Path, data: TicketPayload):
-    # Sticker size: 100mm x 80mm
-    w, h = 100 / 25.4 * inch, 80 / 25.4 * inch
+def _shrink_wrap(text: str, font_name: str, max_width: float):
+    """Company-style shrink: 13pt, then 11, then 9 as line count grows."""
+    font_size = 13
+    lines = wrap_text_to_width(text, font_name, font_size, max_width)
+    if len(lines) > 3:
+        font_size = 9
+        lines = wrap_text_to_width(text, font_name, font_size, max_width)
+    elif len(lines) > 2:
+        font_size = 11
+        lines = wrap_text_to_width(text, font_name, font_size, max_width)
+    return font_size, lines
+
+
+def _text_for_element(el: str, data: TicketPayload):
+    """Returns the text content for a layout element, or None to skip."""
+    if el == "name":
+        return data.name
+    if el == "role":
+        return normalize_role_text(data.ticket_type or "")
+    if el == "company":
+        return data.company
+    if el == "title":
+        return data.title
+    if el == "country":
+        return data.country
+    if el == "table_no":
+        return f"TABLE {data.table_no}" if data.table_no else None
+    return None
+
+
+def _measure_element(el: str, data: TicketPayload, max_width: float):
+    """
+    Measures one layout element. Returns a render item dict or None if
+    the element has no content for this ticket.
+    Text item: {kind: 'text', font, size, lines, line_h}
+    QR item:   {kind: 'qr', size}
+    """
+    if el == "qr":
+        return {"kind": "qr", "size": 1.15 * inch}
+
+    text = _text_for_element(el, data)
+    if not text:
+        return None
+
+    if el == "name":
+        font, (size, lines) = "Helvetica-Bold", get_name_lines_for_width(text, max_width)
+    elif el in ("role", "table_no"):
+        font, (size, lines) = "Helvetica-Bold", get_role_lines_for_width(text, max_width)
+    else:  # company, title, country
+        font, (size, lines) = "Helvetica", _shrink_wrap(text, "Helvetica", max_width)
+
+    if not lines:
+        return None
+    line_h = (size + 3) / 72 * inch
+    return {"kind": "text", "font": font, "size": size, "lines": lines, "line_h": line_h}
+
+
+def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
+    """
+    Renders the badge from a layout config: paper size in mm plus an
+    ordered list of elements. Falls back to the persisted config, then
+    to DEFAULT_LAYOUT.
+    """
+    if layout is None:
+        layout = config_store.load().get("layout") or DEFAULT_LAYOUT
+
+    paper = layout.get("paper") or DEFAULT_LAYOUT["paper"]
+    elements = layout.get("elements") or DEFAULT_LAYOUT["elements"]
+
+    w = float(paper["width_mm"]) / 25.4 * inch
+    h = float(paper["height_mm"]) / 25.4 * inch
     c = canvas.Canvas(str(path), pagesize=(w, h))
 
     side_margin = 0.2 * inch
     max_text_width = w - (2 * side_margin)
-
-    # --- Pre-calculate content ---
-    name_font_size, name_lines = get_name_lines_for_width(data.name, max_text_width)
-
-    font_name_company = "Helvetica"
-    font_size_company = 13
-    company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
-    if len(company_lines) > 3:
-        font_size_company = 9
-        company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
-    elif len(company_lines) > 2:
-        font_size_company = 11
-        company_lines = wrap_text_to_width(data.company or "", font_name_company, font_size_company, max_text_width)
-
-    role_text = normalize_role_text(data.ticket_type or "")
-
-    role_font_size, role_lines = get_role_lines_for_width(role_text, max_text_width)
-    qr_size = 1.15 * inch
-
-    name_line_h = (name_font_size + 3) / 72 * inch
-    company_line_h = (font_size_company + 3) / 72 * inch
-    role_line_h = (role_font_size + 3) / 72 * inch
     gap = 0.07 * inch  # padding between sections
     bottom_margin = 0.06 * inch
 
-    total_h = (
-        len(name_lines) * name_line_h +
-        gap +
-        len(role_lines) * role_line_h +
-        gap +
-        len(company_lines) * company_line_h +
-        gap +
-        qr_size +
-        bottom_margin
-    )
+    # --- Measure ---
+    items = []
+    for el in elements:
+        item = _measure_element(el, data, max_text_width)
+        if item:
+            items.append(item)
 
-    # Anchor block to the bottom margin so VISITOR has consistent gap from edge.
+    total_h = bottom_margin
+    for i, item in enumerate(items):
+        if i > 0:
+            total_h += gap
+        if item["kind"] == "qr":
+            total_h += item["size"]
+        else:
+            total_h += len(item["lines"]) * item["line_h"]
+
+    # Center the block vertically, anchored off the bottom margin.
     start_y = total_h + (h - total_h) / 2 - bottom_margin
     if start_y > h:
         start_y = h
 
+    # --- Render ---
     current_y = start_y
-
-    # --- RENDER: 1. Name ---
-    c.setFont("Helvetica-Bold", name_font_size)
     c.setFillColorRGB(0.1, 0.1, 0.1)
-    for line in name_lines:
-        c.drawCentredString(w / 2, current_y - name_line_h, line)
-        current_y -= name_line_h
-    current_y -= gap
-
-    # --- RENDER: 2. Role ---
-    c.setFont("Helvetica-Bold", role_font_size)
-    for line in role_lines:
-        c.drawCentredString(w / 2, current_y - role_line_h, line)
-        current_y -= role_line_h
-    current_y -= gap
-
-    # --- RENDER: 3. Company ---
-    c.setFont(font_name_company, font_size_company)
-    for line in company_lines:
-        c.drawCentredString(w / 2, current_y - company_line_h, line)
-        current_y -= company_line_h
-    current_y -= gap
-
-    # --- RENDER: 4. QR (no border box) ---
-    qr_x = (w - qr_size) / 2
-    qr_y = current_y - qr_size
-    qr_img = generate_qr_image(data.ticket_id)
-    c.drawImage(qr_img, qr_x, qr_y, width=qr_size, height=qr_size)
+    for i, item in enumerate(items):
+        if i > 0:
+            current_y -= gap
+        if item["kind"] == "qr":
+            qr_size = item["size"]
+            qr_img = generate_qr_image(data.ticket_id)
+            c.drawImage(qr_img, (w - qr_size) / 2, current_y - qr_size,
+                        width=qr_size, height=qr_size)
+            current_y -= qr_size
+        else:
+            c.setFont(item["font"], item["size"])
+            for line in item["lines"]:
+                c.drawCentredString(w / 2, current_y - item["line_h"], line)
+                current_y -= item["line_h"]
 
     c.showPage()
     c.save()
