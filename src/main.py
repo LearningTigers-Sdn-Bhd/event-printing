@@ -231,6 +231,9 @@ def _ticket_payload_from_backend(data: dict) -> TicketPayload:
     """Maps backend ticket response into local TicketPayload."""
     custom_fields = data.get("custom_fields_data") or {}
     company = None
+    title = None
+    country = None
+    table_no = None
     if isinstance(custom_fields, dict):
         company = (
             custom_fields.get("company")
@@ -239,10 +242,27 @@ def _ticket_payload_from_backend(data: dict) -> TicketPayload:
             or custom_fields.get("organisation")
             or None
         )
+        title = (
+            custom_fields.get("title")
+            or custom_fields.get("position")
+            or custom_fields.get("job_title")
+            or custom_fields.get("designation")
+            or None
+        )
+        country = custom_fields.get("country") or None
+        table_no = (
+            custom_fields.get("table_no")
+            or custom_fields.get("table_number")
+            or custom_fields.get("table")
+            or None
+        )
     return TicketPayload(
         ticket_id=str(data.get("public_id") or "").strip(),
         name=str(data.get("attendee_name") or "").strip(),
         company=company,
+        title=title,
+        country=country,
+        table_no=table_no,
         ticket_type=str(data.get("ticket_type") or "").strip() or "Visitor",
     )
 
@@ -267,6 +287,7 @@ class ConfigPayload(BaseModel):
     backend_url: str | None = None
     event_slug: str | None = None
     api_key: str | None = None
+    layout: dict | None = None
 
 
 @app.get("/config")

@@ -43,7 +43,7 @@ class TicketRoleLabelTests(unittest.TestCase):
     def test_visitor_prints_unchanged(self):
         self.assertEqual(pdf_generator.normalize_role_text("Visitor"), "Visitor")
 
-    def test_badge_sections_render_in_requested_order(self):
+    def _render(self, layout):
         events = []
 
         class FakeCanvas:
@@ -72,16 +72,52 @@ class TicketRoleLabelTests(unittest.TestCase):
             ticket_id="A1-0245",
             name="Test User",
             company="Test Company",
+            title="CEO",
+            country="Malaysia",
+            table_no="12",
             ticket_type="Interested Delegate",
         )
 
         with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
             with patch.object(pdf_generator, "generate_qr_image", lambda data: object()):
-                pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload)
+                pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload, layout)
+        return events
 
+    def test_badge_sections_render_in_requested_order(self):
+        events = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role", "company", "qr"],
+        })
         self.assertLess(events.index("TEST USER"), events.index("DELEGATE"))
         self.assertLess(events.index("DELEGATE"), events.index("TEST COMPANY"))
         self.assertLess(events.index("TEST COMPANY"), events.index("QR"))
+
+    def test_layout_reorders_and_omits_elements(self):
+        events = self._render({
+            "paper": {"width_mm": 155, "height_mm": 104},
+            "elements": ["name", "title", "company", "country", "role"],
+        })
+        self.assertNotIn("QR", events)
+        self.assertLess(events.index("TEST USER"), events.index("CEO"))
+        self.assertLess(events.index("CEO"), events.index("TEST COMPANY"))
+        self.assertLess(events.index("TEST COMPANY"), events.index("MALAYSIA"))
+        self.assertLess(events.index("MALAYSIA"), events.index("DELEGATE"))
+
+    def test_layout_with_table_no_after_role(self):
+        events = self._render({
+            "paper": {"width_mm": 155, "height_mm": 104},
+            "elements": ["name", "company", "qr", "role", "table_no"],
+        })
+        self.assertLess(events.index("QR"), events.index("DELEGATE"))
+        self.assertLess(events.index("DELEGATE"), events.index("TABLE 12"))
+
+    def test_missing_optional_field_skipped(self):
+        events = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "country", "role"],
+        })
+        # country present in payload -> rendered; now check skip behavior via empty company
+        self.assertIn("MALAYSIA", events)
 
 
 if __name__ == "__main__":

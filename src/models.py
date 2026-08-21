@@ -17,13 +17,18 @@ class TicketPayload(BaseModel):
     company: Optional[str] = Field(default=None, max_length=200, example="Fazli Corp.")
     title: Optional[str] = Field(default=None, max_length=200, example="CEO")
     ticket_type: str = Field(..., max_length=100, example="Delegate")
+    country: Optional[str] = Field(default=None, max_length=100, example="Malaysia")
+    table_no: Optional[str] = Field(default=None, max_length=50, example="12")
 
     @model_validator(mode="before")
     @classmethod
-    def map_organisation_to_company(cls, data: Any) -> Any:
-        if isinstance(data, dict) and not data.get("company"):
+    def map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
             data = dict(data)
-            data["company"] = data.get("organisation") or data.get("organization")
+            if not data.get("company"):
+                data["company"] = data.get("organisation") or data.get("organization")
+            if not data.get("table_no"):
+                data["table_no"] = data.get("table_number") or data.get("table")
         return data
 
     @field_validator("ticket_id", "name", "ticket_type", mode="before")
@@ -34,7 +39,7 @@ class TicketPayload(BaseModel):
             raise ValueError("Field must be a non-empty string.")
         return result
 
-    @field_validator("company", "title", mode="before")
+    @field_validator("company", "title", "country", "table_no", mode="before")
     @classmethod
     def sanitize_optional_str(cls, v: Any) -> Optional[str]:
         if v is None:
