@@ -11,7 +11,7 @@ _APP_NAME = "event-printer"
 VALID_ELEMENTS = ("name", "role", "company", "title", "country", "table_no", "qr")
 
 DEFAULT_LAYOUT = {
-    "paper": {"width_mm": 100.0, "height_mm": 80.0},
+    "paper": {"width_mm": 80.0, "height_mm": 100.0},
     "elements": ["name", "role", "company", "qr"],
 }
 
