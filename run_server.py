@@ -3,9 +3,21 @@ import os
 import threading
 import time
 
+# Guard stdout/stderr in windowed (noconsole) mode where they might be None
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 import uvicorn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+# When bundled with PyInstaller, src is in sys._MEIPASS/src
+if getattr(sys, "frozen", False):
+    _src_path = os.path.join(sys._MEIPASS, "src")
+    if _src_path not in sys.path:
+        sys.path.insert(0, _src_path)
+else:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from main import app
 
@@ -63,4 +75,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

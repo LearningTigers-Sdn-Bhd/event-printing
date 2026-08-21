@@ -66,7 +66,10 @@ def _auto_detect_printer() -> str:
 
 
 PRINTER_NAME = _auto_detect_printer()
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "out")
+_raw_output_dir = Path(os.getenv("OUTPUT_DIR", "out"))
+if not _raw_output_dir.is_absolute():
+    _raw_output_dir = _base_dir / _raw_output_dir
+OUTPUT_DIR = str(_raw_output_dir)
 PORT = int(os.getenv("PORT", "8000"))
 
 

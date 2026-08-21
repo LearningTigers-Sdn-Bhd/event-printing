@@ -86,53 +86,13 @@ Output: `dist/event-printer`
 
 ### Windows (Command Prompt or PowerShell)
 
-```cmd
-pyinstaller --onefile --name event-printer ^
-  --add-data "src;src" ^
-  --hidden-import fastapi ^
-  --hidden-import uvicorn ^
-  --hidden-import uvicorn.logging ^
-  --hidden-import uvicorn.loops ^
-  --hidden-import uvicorn.loops.auto ^
-  --hidden-import uvicorn.protocols ^
-  --hidden-import uvicorn.protocols.http ^
-  --hidden-import uvicorn.protocols.http.auto ^
-  --hidden-import uvicorn.protocols.websockets ^
-  --hidden-import uvicorn.protocols.websockets.auto ^
-  --hidden-import uvicorn.lifespan ^
-  --hidden-import uvicorn.lifespan.on ^
-  --hidden-import pydantic ^
-  --hidden-import pydantic_settings ^
-  --hidden-import reportlab ^
-  --hidden-import reportlab.pdfgen ^
-  --hidden-import reportlab.pdfgen.canvas ^
-  --hidden-import reportlab.pdfbase ^
-  --hidden-import reportlab.pdfbase.pdfmetrics ^
-  --hidden-import reportlab.pdfbase.ttfonts ^
-  --hidden-import reportlab.lib ^
-  --hidden-import reportlab.lib.units ^
-  --hidden-import reportlab.lib.utils ^
-  --hidden-import qrcode ^
-  --hidden-import qrcode.image.pure ^
-  --hidden-import qrcode.image.pil ^
-  --hidden-import dotenv ^
-  --hidden-import fitz ^
-  --hidden-import PIL ^
-  --hidden-import PIL.Image ^
-  --hidden-import PIL.ImageDraw ^
-  --hidden-import PIL.ImageFont ^
-  --hidden-import win32print ^
-  --hidden-import win32ui ^
-  --hidden-import win32con ^
-  --hidden-import win32gui ^
-  --hidden-import win32api ^
-  --collect-all reportlab ^
-  --collect-all fitz ^
-  --collect-all PIL ^
-  run_server.py
+Using the included spec file (handles all assets, webview, and dependencies automatically):
+
+```powershell
+.\.venv-win\Scripts\pyinstaller.exe event-printer.spec --clean --noconfirm
 ```
 
-Output: `dist/event-printer.exe`
+Output: `dist/event-printer.exe` (a single standalone file ready to copy to any Windows machine)
 
 ---
 
