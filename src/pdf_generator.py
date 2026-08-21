@@ -268,7 +268,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
 
     side_margin = 0.2 * inch
     max_text_width = w - (2 * side_margin)
-    gap = 0.07 * inch  # padding between sections
+    base_gap = 0.07 * inch  # minimum padding between sections
     bottom_margin = 0.06 * inch
 
     # --- Measure ---
@@ -278,14 +278,22 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
         if item:
             items.append(item)
 
-    total_h = bottom_margin
-    for i, item in enumerate(items):
-        if i > 0:
-            total_h += gap
-        if item["kind"] == "qr":
-            total_h += item["size"]
-        else:
-            total_h += len(item["lines"]) * item["line_h"]
+    content_h = sum(
+        item["size"] if item["kind"] == "qr" else len(item["lines"]) * item["line_h"]
+        for item in items
+    )
+
+    # Fewer/shorter elements leave slack on a bigger page — stretch the
+    # gaps between sections (not the fonts) to spread the block across
+    # the label instead of leaving it clumped with a big empty margin.
+    n_gaps = max(0, len(items) - 1)
+    if n_gaps:
+        slack = h - content_h - 2 * bottom_margin
+        gap = max(base_gap, min(slack / n_gaps, 0.6 * inch))
+    else:
+        gap = base_gap
+
+    total_h = content_h + gap * n_gaps + bottom_margin
 
     # Center the block vertically, anchored off the bottom margin.
     start_y = total_h + (h - total_h) / 2 - bottom_margin
