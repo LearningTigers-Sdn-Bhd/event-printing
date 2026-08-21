@@ -175,7 +175,14 @@
         <h2>Layout</h2>
         <p class="disclaimer">Badge layout for this event. Set the paper size, tick the fields to print, and reorder them top-to-bottom. Saved on this machine.</p>
         <form id="layout-form" onsubmit="saveLayout(event)">
-          <div class="paper-row">
+          <label>Paper size
+            <select id="lay-preset" onchange="applyPaperPreset()">
+              <option value="sticker">Sticker — 100 × 80 mm</option>
+              <option value="card">Badge card — 155 × 104 mm</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <div class="paper-row" id="paper-custom">
             <label>Width (mm)
               <input id="lay-w" type="number" min="20" max="500" step="0.1" required />
             </label>
@@ -334,10 +341,34 @@
   };
   let layoutElements = []; // ordered, enabled elements
 
+  const PAPER_PRESETS = {
+    sticker: { width_mm: 100, height_mm: 80 },
+    card: { width_mm: 155, height_mm: 104 },
+  };
+
+  function matchPreset(w, h) {
+    for (const [key, p] of Object.entries(PAPER_PRESETS)) {
+      if (p.width_mm === w && p.height_mm === h) return key;
+    }
+    return "custom";
+  }
+
+  function applyPaperPreset() {
+    const key = $("lay-preset").value;
+    const custom = key === "custom";
+    $("paper-custom").style.display = custom ? "" : "none";
+    if (!custom) {
+      $("lay-w").value = PAPER_PRESETS[key].width_mm;
+      $("lay-h").value = PAPER_PRESETS[key].height_mm;
+    }
+  }
+
   function renderLayoutEditor(layout) {
     if (layout && layout.paper) {
       $("lay-w").value = layout.paper.width_mm;
       $("lay-h").value = layout.paper.height_mm;
+      $("lay-preset").value = matchPreset(layout.paper.width_mm, layout.paper.height_mm);
+      $("paper-custom").style.display = $("lay-preset").value === "custom" ? "" : "none";
       layoutElements = (layout.elements || []).filter((e) => EL_LABELS[e]);
     }
     const list = $("layout-list");
