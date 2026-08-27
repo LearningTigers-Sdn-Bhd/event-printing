@@ -6,6 +6,16 @@ datas = [
     ('src', 'src'),
 ]
 binaries = []
+
+# pywin32's win32ui/win32print depend on loose DLLs (pywintypesNN.dll,
+# pythoncomNN.dll) normally installed into System32 by pywin32_postinstall.py.
+# hiddenimports alone won't pull these in, and machines without that
+# postinstall having run (i.e. anything but the build machine) get
+# "DLL load failed while importing win32ui" at runtime.
+import glob, os, sys
+_pywin32_system32 = os.path.join(os.path.dirname(sys.executable), '..', 'Lib', 'site-packages', 'pywin32_system32')
+for _dll in glob.glob(os.path.join(_pywin32_system32, '*.dll')):
+    binaries.append((_dll, '.'))
 hiddenimports = [
     'fastapi',
     'fastapi.staticfiles',
