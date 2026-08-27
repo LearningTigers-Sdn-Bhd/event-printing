@@ -12,9 +12,21 @@ binaries = []
 # hiddenimports alone won't pull these in, and machines without that
 # postinstall having run (i.e. anything but the build machine) get
 # "DLL load failed while importing win32ui" at runtime.
-import glob, os, sys
-_pywin32_system32 = os.path.join(os.path.dirname(sys.executable), '..', 'Lib', 'site-packages', 'pywin32_system32')
-for _dll in glob.glob(os.path.join(_pywin32_system32, '*.dll')):
+#
+# Locate pywin32_system32 via an actual pywin32 module's __file__ instead of
+# guessing from sys.executable — that guess assumed a venv layout and silently
+# found zero DLLs on a global/differently-laid-out Python install.
+import glob, os
+import win32api
+_site_packages = os.path.dirname(os.path.dirname(win32api.__file__))
+_pywin32_system32 = os.path.join(_site_packages, 'pywin32_system32')
+_pywin32_dlls = glob.glob(os.path.join(_pywin32_system32, '*.dll'))
+if not _pywin32_dlls:
+    raise RuntimeError(
+        f"No pywin32 DLLs found in {_pywin32_system32!r} - "
+        "win32ui will DLL-load-fail at runtime. Check pywin32 is installed."
+    )
+for _dll in _pywin32_dlls:
     binaries.append((_dll, '.'))
 hiddenimports = [
     'fastapi',
