@@ -83,6 +83,48 @@ def _rasterize_pdf_for_zebra(pdf_path: str) -> str:
     return out_path
 
 
+def _create_printer_dc(printer_name: str, hprinter):
+    """
+    Create the printer DC, forcing paper size from the saved layout config
+    (config_store.load()["layout"]["paper"]) via a custom DEVMODE so users
+    don't have to match it manually in Windows' printer settings.
+
+    ponytail: some label-printer drivers only accept sizes from their own
+    predefined list and ignore a custom DEVMODE — falls back silently to
+    the printer's own default DC in that case (previous behavior).
+    """
+    import win32print
+    import win32ui
+    import win32gui
+    import win32con
+    import config_store
+
+    try:
+        paper = (config_store.load().get("layout") or {}).get("paper") or {}
+        width_mm = paper.get("width_mm")
+        height_mm = paper.get("height_mm")
+        if width_mm and height_mm:
+            devmode = win32print.GetPrinter(hprinter, 2)["pDevMode"]
+            devmode.PaperSize = 0  # 0 = use PaperWidth/PaperLength instead of a preset
+            devmode.PaperWidth = int(round(width_mm * 10))   # tenths of a mm
+            devmode.PaperLength = int(round(height_mm * 10))
+            devmode.Fields |= (
+                win32con.DM_PAPERSIZE | win32con.DM_PAPERWIDTH | win32con.DM_PAPERLENGTH
+            )
+            devmode = win32print.DocumentProperties(
+                0, hprinter, printer_name, devmode, devmode,
+                win32con.DM_IN_BUFFER | win32con.DM_OUT_BUFFER,
+            )
+            hdc_handle = win32gui.CreateDC("WINSPOOL", printer_name, None, devmode)
+            return win32ui.CreateDCFromHandle(hdc_handle)
+    except Exception:
+        pass
+
+    hdc = win32ui.CreateDC()
+    hdc.CreatePrinterDC(printer_name)
+    return hdc
+
+
 def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
     """
     Sends a file to the printer using Windows printing system.
@@ -95,21 +137,21 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
         import fitz  # PyMuPDF
         import win32print
         import win32ui
+        import win32gui
         from PIL import Image
         import tempfile
         import win32con
-        
+
         # Open the PDF
         pdf_document = fitz.open(abs_path)
         num_pages = len(pdf_document)
-        
+
         # Open printer
         hprinter = win32print.OpenPrinter(printer_name)
-        
+
         try:
-            # Create printer DC
-            hdc = win32ui.CreateDC()
-            hdc.CreatePrinterDC(printer_name)
+            # Create printer DC, forcing the configured paper size when possible
+            hdc = _create_printer_dc(printer_name, hprinter)
             
             # Start print job
             hdc.StartDoc(os.path.basename(abs_path))

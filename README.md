@@ -23,6 +23,12 @@ A cross-platform FastAPI application for generating and printing event badges/ti
 
 ## 🪟 Windows Setup
 
+### 0. Install Visual C++ Redistributable (new laptops only)
+
+The bundled .exe needs the Microsoft Visual C++ Runtime to load `win32ui`.
+If printing fails with `DLL load failed while importing win32ui`, install:
+https://aka.ms/vs/17/release/vc_redist.x64.exe
+
 ### 1. Install Python Dependencies
 
 ```bash
