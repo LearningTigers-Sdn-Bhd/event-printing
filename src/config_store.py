@@ -23,7 +23,30 @@ MAX_BADGE_TYPES = 30
 DEFAULT_LAYOUT = {
     "paper": {"width_mm": 100.0, "height_mm": 80.0},
     "elements": ["name", "role", "company", "qr"],
+    "element_scales": {},
 }
+
+# Per-element size multipliers (relative to the auto-fit size). 1.0 = default.
+MIN_ELEMENT_SCALE = 0.5
+MAX_ELEMENT_SCALE = 2.0
+
+
+def _sanitize_element_scales(value: Any, known_elements: set) -> Dict[str, float]:
+    """Validates {element_id: scale}; drops unknown ids and out-of-range values."""
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, float] = {}
+    for el, raw in value.items():
+        if not isinstance(el, str) or el not in known_elements:
+            continue
+        try:
+            scale = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if abs(scale - 1.0) < 1e-9:
+            continue  # 1.0 is the default; storing it adds noise
+        result[el] = round(min(MAX_ELEMENT_SCALE, max(MIN_ELEMENT_SCALE, scale)), 2)
+    return result
 
 
 def _sanitize_badge_types(value: Any) -> Optional[list]:
@@ -94,10 +117,12 @@ def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
             elements.append(el)
     if not elements:
         return None
+    known = set(VALID_ELEMENTS) | set(custom_fields)
     return {
         "paper": {"width_mm": width_mm, "height_mm": height_mm},
         "elements": elements,
         "custom_fields": custom_fields,
+        "element_scales": _sanitize_element_scales(value.get("element_scales"), known),
     }
 
 

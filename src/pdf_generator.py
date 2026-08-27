@@ -214,6 +214,13 @@ _FIT_FILL_TARGET = 0.80
 _FIT_WIDTH_LIMIT = 0.92
 _SCALE_STEP = 0.05
 
+# Absolute per-element ceilings for auto-fit growth. Sparse badges (few
+# fields) would otherwise balloon to fill the height budget — a two-field
+# badge reading "VVIP" at poster size. Caps keep the visual hierarchy:
+# name largest, then role, then supporting fields.
+_ELEMENT_GROWTH_CAPS = {"name": 44, "role": 36, "table_no": 30}
+_ELEMENT_GROWTH_CAP_DEFAULT = 20
+
 
 def _text_for_element(el: str, data: TicketPayload):
     """Returns the text content for a layout element, or None to skip."""
@@ -306,22 +313,27 @@ def _auto_fit_scale(items, data: TicketPayload, h: float, max_text_width: float)
     Sparse-badge auto-fit: when the natural-size content leaves lots of
     slack, grow the type until the block fills a target share of the
     badge height. Guardrails: the block stops at _FIT_FILL_TARGET of the
-    height, every line keeps _FIT_WIDTH_LIMIT of the text width, and a
-    step is rolled back if it would add wrap lines or overflow.
+    height, every line keeps _FIT_WIDTH_LIMIT of the text width, each
+    element stops at its growth cap (scaled by the user's size setting),
+    and a step is rolled back if it would add wrap lines or overflow.
     """
     text_items = [it for it in items if it["kind"] == "text"]
     if not text_items:
         return
     height_budget = h * _FIT_FILL_TARGET
 
+    def _cap_for(it):
+        base = _ELEMENT_GROWTH_CAPS.get(it["el"], _ELEMENT_GROWTH_CAP_DEFAULT)
+        return base * it.get("scale", 1.0)
+
     while _block_height(items) < height_budget:
         grew = False
         trial = []
         for it in items:
-            if it["kind"] != "text":
-                trial.append(it)
+            if it["kind"] != "text" or it["size"] >= _cap_for(it):
+                trial.append(it)  # QRs never grow; capped elements are done
                 continue
-            grown = it["size"] * (1 + _SCALE_STEP)
+            grown = min(it["size"] * (1 + _SCALE_STEP), _cap_for(it))
             text = _text_for_element(it["el"], data)
             lines = _lines_at_size(text, it["font"], grown, max_text_width, len(it["lines"]))
             width_ok = lines and all(
@@ -333,7 +345,7 @@ def _auto_fit_scale(items, data: TicketPayload, h: float, max_text_width: float)
                 continue
             grew = True
             trial.append({**it, "size": grown, "lines": lines,
-                          "line_h": (grown + 3) / 72 * inch})
+                          "line_h": (grown + 3) / 72 * inch, "scale": it.get("scale", 1.0)})
         if not grew:
             break
         if _block_height(trial) > height_budget:
@@ -341,29 +353,36 @@ def _auto_fit_scale(items, data: TicketPayload, h: float, max_text_width: float)
         items[:] = trial
 
 
-def _measure_element(el: str, data: TicketPayload, max_width: float):
+def _measure_element(el: str, data: TicketPayload, max_width: float, scale: float = 1.0):
     """
     Measures one layout element. Returns a render item dict or None if
     the element has no content for this ticket.
     Text item: {kind: 'text', font, size, lines, line_h, el, cap}
     QR item:   {kind: 'qr', size}
+    `scale` is a user-set size multiplier (1.0 = auto default). For text
+    it scales the base font and the width budget together so the natural
+    wrap structure is preserved; auto-fit growth caps scale along so the
+    relative hierarchy the user picked survives the grow pass.
     """
     if el == "qr":
-        return {"kind": "qr", "size": 1.15 * inch}
+        return {"kind": "qr", "size": _QR_NATURAL * scale}
 
     text = _text_for_element(el, data)
     if not text:
         return None
 
+    fit_width = max_width / scale  # grow the box with the type: same wraps, bigger glyphs
+
     if el == "name":
-        font, (size, lines) = "Helvetica-Bold", get_name_lines_for_width(text, max_width)
+        font, (size, lines) = "Helvetica-Bold", get_name_lines_for_width(text, fit_width)
     elif el in ("role", "table_no"):
-        font, (size, lines) = "Helvetica-Bold", get_role_lines_for_width(text, max_width)
+        font, (size, lines) = "Helvetica-Bold", get_role_lines_for_width(text, fit_width)
     else:  # company, title, country, custom fields
-        font, (size, lines) = "Helvetica", _shrink_wrap(text, "Helvetica", max_width)
+        font, (size, lines) = "Helvetica", _shrink_wrap(text, "Helvetica", fit_width)
 
     if not lines:
         return None
+    size *= scale
     line_h = (size + 3) / 72 * inch
     return {"kind": "text", "font": font, "size": size, "lines": lines, "line_h": line_h, "el": el}
 
@@ -379,6 +398,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
 
     paper = layout.get("paper") or DEFAULT_LAYOUT["paper"]
     elements = layout.get("elements") or DEFAULT_LAYOUT["elements"]
+    element_scales = layout.get("element_scales") or {}
 
     w = float(paper["width_mm"]) / 25.4 * inch
     h = float(paper["height_mm"]) / 25.4 * inch
@@ -391,8 +411,10 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     # --- Measure ---
     items = []
     for el in elements:
-        item = _measure_element(el, data, max_text_width)
+        scale = element_scales.get(el, 1.0)
+        item = _measure_element(el, data, max_text_width, scale=scale)
         if item:
+            item["scale"] = scale
             items.append(item)
 
     _auto_fit_scale(items, data, h, max_text_width)

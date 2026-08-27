@@ -202,6 +202,8 @@
   let layoutElements = [];
   let customFieldDefs = {}; // id -> {label, backend_key}
   let customValues = {};    // id -> value typed in manual entry
+  let elementScales = {};   // id -> size multiplier (1 = auto default)
+  let sizingMode = false;   // Adjust-size mode: sliders shown, drag disabled
 
   function elLabel(el) {
     if (customFieldDefs[el]) return customFieldDefs[el].label || "New field";
@@ -250,6 +252,11 @@
         if (typeof def === "string") customFieldDefs[id] = { label: def, backend_key: "" };
         else customFieldDefs[id] = { label: def.label || id, backend_key: def.backend_key || "" };
       }
+      elementScales = {};
+      for (const [id, s] of Object.entries(layout.element_scales || {})) {
+        const n = parseFloat(s);
+        if (isFinite(n) && n > 0) elementScales[id] = Math.min(2, Math.max(0.5, n));
+      }
       layoutElements = (layout.elements || []).filter((e) => elLabel(e));
     }
     _syncPreviewSize();
@@ -270,6 +277,53 @@
     });
     syncManualFields();
     renderCustomFieldManager();
+    syncSizingButton();
+  }
+
+  function syncSizingButton() {
+    const btn = $("sizing-toggle");
+    if (btn) {
+      btn.classList.toggle("active", sizingMode);
+      btn.textContent = sizingMode ? "Done adjusting" : "Adjust size";
+      btn.setAttribute("aria-pressed", sizingMode ? "true" : "false");
+    }
+    const resetBtn = $("sizing-reset");
+    if (resetBtn) resetBtn.style.display = sizingMode ? "" : "none";
+    const layoutResetBtn = $("layout-reset");
+    if (layoutResetBtn) layoutResetBtn.style.display = sizingMode ? "none" : "";
+    const list = $("layout-list");
+    if (list) list.classList.toggle("sizing-mode", sizingMode);
+  }
+
+  // Reset every element's size override back to automatic (100%).
+  function resetSizes() {
+    if (!Object.keys(elementScales).length) { toast("Sizes are already at default", "warn"); return; }
+    if (!confirm("Reset all text sizes back to automatic?")) return;
+    elementScales = {};
+    renderLayoutEditor();
+    schedulePreview();
+    toast("Sizes reset to automatic");
+  }
+
+  // Reset the whole layout: paper, element order/selection, sizes, and
+  // custom fields all go back to the built-in default.
+  const DEFAULT_LAYOUT_STATE = {
+    paper: { width_mm: 100, height_mm: 80 },
+    elements: ["name", "role", "company", "qr"],
+    custom_fields: {},
+    element_scales: {},
+  };
+
+  function resetLayout() {
+    if (!confirm("Reset the whole layout to default? Paper size, field order, sizes and custom fields will be restored.")) return;
+    layoutElements = DEFAULT_LAYOUT_STATE.elements.slice();
+    customFieldDefs = {};
+    elementScales = {};
+    customValues = {};
+    sizingMode = false;
+    renderLayoutEditor(DEFAULT_LAYOUT_STATE);
+    schedulePreview();
+    toast("Layout reset to default — press Save layout to keep it");
   }
 
   // ================= Manual entry follows badge layout =================
@@ -293,9 +347,14 @@
       if (!show) hiddenCount++;
     }
     // Ticket ID only feeds the QR code — hide it when QR isn't on the badge.
-    const ticketLabel = $("f-ticket").closest("label");
-    ticketLabel.hidden = !layoutElements.includes("qr");
-    if (ticketLabel.hidden) hiddenCount++;
+    // Must also disable it: a hidden-but-required enabled input would block
+    // form submission with no visible error.
+    const ticketInput = $("f-ticket");
+    const ticketVisible = layoutElements.includes("qr");
+    const ticketLabel = ticketInput.closest("label");
+    ticketLabel.hidden = !ticketVisible;
+    ticketInput.disabled = !ticketVisible;
+    if (!ticketVisible) hiddenCount++;
     // Position / Table No. row: collapse to one column when only one remains
     const titleShown = !$("f-title").closest("label").hidden;
     const tableShown = !$("f-table").closest("label").hidden;
@@ -473,6 +532,50 @@
     }
   }
 
+  // Adjust-size mode is off by default. Turning it on reveals the sliders,
+  // hides the drag handles + backend-key hints (more room), and disables
+  // row drag-and-drop so sliding never moves a row. Re-render on toggle.
+  function toggleSizingMode() {
+    sizingMode = !sizingMode;
+    renderLayoutEditor();
+  }
+
+  // Per-element size slider: 50%–200% of the auto-fit size. 100% means
+  // "no override" and isn't persisted.
+  function scaleControl(el) {
+    const wrap = document.createElement("span");
+    wrap.className = "el-scale";
+    wrap.title = "Size relative to automatic";
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "50";
+    slider.max = "200";
+    slider.step = "5";
+    slider.value = String(Math.round((elementScales[el] || 1) * 100));
+    slider.setAttribute("aria-label", "Size for " + elLabel(el));
+
+    const val = document.createElement("span");
+    val.className = "el-scale-val";
+    val.textContent = slider.value + "%";
+
+    slider.addEventListener("input", () => {
+      val.textContent = slider.value + "%";
+      const scale = parseInt(slider.value, 10) / 100;
+      if (scale === 1) delete elementScales[el];
+      else elementScales[el] = scale;
+      schedulePreview();
+    });
+    slider.addEventListener("dblclick", () => {
+      slider.value = "100";
+      slider.dispatchEvent(new Event("input"));
+    });
+
+    wrap.appendChild(slider);
+    wrap.appendChild(val);
+    return wrap;
+  }
+
   function layoutRow(el, enabled) {
     const row = document.createElement("div");
     row.className = "layout-el" + (enabled ? "" : " off");
@@ -480,7 +583,7 @@
     handle.className = "drag-handle";
     handle.setAttribute("aria-hidden", "true");
     handle.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="5" r="1.7"/><circle cx="15" cy="5" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="19" r="1.7"/><circle cx="15" cy="19" r="1.7"/></svg>';
-    row.appendChild(handle);
+    if (!sizingMode) row.appendChild(handle);
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = enabled;
@@ -493,7 +596,7 @@
     const label = document.createElement("span");
     label.className = "el-label";
     label.textContent = elLabel(el);
-    if (EL_BACKEND_KEYS[el]) {
+    if (EL_BACKEND_KEYS[el] && !sizingMode) {
       const hint = document.createElement("span");
       hint.className = "key-hint";
       hint.textContent = "(" + EL_BACKEND_KEYS[el] + ")";
@@ -501,11 +604,18 @@
     }
     row.appendChild(cb);
     row.appendChild(label);
+    if (enabled && sizingMode) {
+      row.appendChild(scaleControl(el));
+    }
     if (enabled) {
       row.dataset.el = el;
-      row.draggable = true;
+      if (sizingMode) {
+        row.classList.add("sizing");
+      } else {
+        row.draggable = true;
+      }
       row.addEventListener("dragstart", (e) => {
-        if (e.target.closest("input, button, select")) { e.preventDefault(); return; }
+        if (sizingMode || e.target.closest("input, button, select")) { e.preventDefault(); return; }
         _layoutDragEl = row;
         row.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
@@ -561,6 +671,7 @@
         },
         elements: layoutElements,
         custom_fields: customFieldDefs,
+        element_scales: elementScales,
       },
     };
     try {

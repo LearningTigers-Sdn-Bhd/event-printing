@@ -13,7 +13,7 @@ class TicketPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     ticket_id: str = Field(..., max_length=100, example="A1-0245")
-    name: str = Field(..., max_length=200, example="Fazli")
+    name: Optional[str] = Field(default=None, max_length=200, example="Fazli")
     company: Optional[str] = Field(default=None, max_length=200, example="Fazli Corp.")
     title: Optional[str] = Field(default=None, max_length=200, example="CEO")
     ticket_type: str = Field(..., max_length=100, example="Delegate")
@@ -32,13 +32,18 @@ class TicketPayload(BaseModel):
                 data["table_no"] = data.get("table_number") or data.get("table")
         return data
 
-    @field_validator("ticket_id", "name", "ticket_type", mode="before")
+    @field_validator("ticket_id", "ticket_type", mode="before")
     @classmethod
     def sanitize_str(cls, v: Any) -> str:
         result = _sanitize_str(v)
         if not result:
             raise ValueError("Field must be a non-empty string.")
         return result
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def sanitize_optional_name(cls, v: Any) -> Optional[str]:
+        return _sanitize_str(v)
 
     @field_validator("company", "title", "country", "table_no", mode="before")
     @classmethod

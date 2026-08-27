@@ -186,7 +186,7 @@
 
       <section class="zone">
         <h2>Badge layout</h2>
-        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. The preview updates automatically.</p>
+        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size, press <strong>Adjust size</strong> — sliders appear and rows stay put while you drag them. The preview updates automatically.</p>
         <form id="layout-form" onsubmit="saveLayout(event)">
           <label>Paper size
             <select id="lay-preset" onchange="applyPaperPreset()">
@@ -202,6 +202,12 @@
             <label>Height (mm)
               <input id="lay-h" type="number" min="20" max="500" step="0.1" required />
             </label>
+          </div>
+          <div class="layout-toolbar">
+            <button type="button" class="ghost danger-ghost" id="layout-reset" onclick="resetLayout()">Reset layout</button>
+            <span class="spacer"></span>
+            <button type="button" class="ghost" id="sizing-reset" onclick="resetSizes()" style="display:none">Reset sizes</button>
+            <button type="button" class="ghost" id="sizing-toggle" onclick="toggleSizingMode()" aria-pressed="false">Adjust size</button>
           </div>
           <div class="layout-list" id="layout-list"></div>
           <div class="custom-fields-manager" id="custom-fields-manager"></div>
