@@ -165,16 +165,19 @@
   let lastPreviewBlobUrl = null;
 
   function buildPayload(forPreview) {
-    const ticket = $("f-ticket").value.trim();
+    const ticketVisible = !$("f-ticket").closest("label").hidden;
+    const ticket = ticketVisible ? $("f-ticket").value.trim() : "";
     const name = $("f-name").value.trim();
     return {
-      ticket_id: ticket || (forPreview ? "PREVIEW" : ""),
+      // Ticket ID only feeds the QR; when hidden, an internal id is generated.
+      ticket_id: ticket || (forPreview ? "PREVIEW" : "MANUAL-" + Date.now()),
       name: name || (forPreview ? "Sample Name" : ""),
       company: $("f-company").value.trim() || null,
       title: $("f-title").value.trim() || null,
       country: $("f-country").value.trim() || null,
       table_no: $("f-table").value.trim() || null,
       ticket_type: $("f-type").value,
+      custom: customValues,
     };
   }
 
@@ -185,10 +188,26 @@
     company: "Company",
     title: "Position",
     country: "Country",
-    table_no: "Table No.",
+    table_no: "Table Number",
     qr: "QR code",
   };
+  const EL_BACKEND_KEYS = {
+    name: "attendee_name",
+    role: "ticket_type",
+    company: "company",
+    title: "title",
+    country: "country",
+    table_no: "table_number",
+  };
   let layoutElements = [];
+  let customFieldDefs = {}; // id -> {label, backend_key}
+  let customValues = {};    // id -> value typed in manual entry
+
+  function elLabel(el) {
+    if (customFieldDefs[el]) return customFieldDefs[el].label || "New field";
+    return EL_LABELS[el] || el;
+  }
+
 
   const PAPER_PRESETS = {
     sticker: { width_mm: 100, height_mm: 80 },
@@ -226,17 +245,31 @@
       $("lay-h").value = layout.paper.height_mm;
       $("lay-preset").value = matchPreset(layout.paper.width_mm, layout.paper.height_mm);
       $("paper-custom").style.display = $("lay-preset").value === "custom" ? "" : "none";
-      layoutElements = (layout.elements || []).filter((e) => EL_LABELS[e]);
+      customFieldDefs = {};
+      for (const [id, def] of Object.entries(layout.custom_fields || {})) {
+        if (typeof def === "string") customFieldDefs[id] = { label: def, backend_key: "" };
+        else customFieldDefs[id] = { label: def.label || id, backend_key: def.backend_key || "" };
+      }
+      layoutElements = (layout.elements || []).filter((e) => elLabel(e));
     }
     _syncPreviewSize();
     const list = $("layout-list");
     list.innerHTML = "";
-    const disabled = Object.keys(EL_LABELS).filter((e) => !layoutElements.includes(e));
+    const disabled = Object.keys(EL_LABELS)
+      .concat(Object.keys(customFieldDefs))
+      .filter((e, i, arr) => arr.indexOf(e) === i && !layoutElements.includes(e));
     layoutElements.forEach((el) => {
-      list.appendChild(layoutRow(el, true));
+      const row = layoutRow(el, true);
+      list.appendChild(row);
+      attachCustomInputs(row, el);
     });
-    disabled.forEach((el) => list.appendChild(layoutRow(el, false)));
+    disabled.forEach((el) => {
+      const row = layoutRow(el, false);
+      list.appendChild(row);
+      attachCustomInputs(row, el);
+    });
     syncManualFields();
+    renderCustomFieldManager();
   }
 
   // ================= Manual entry follows badge layout =================
@@ -259,6 +292,10 @@
       input.disabled = !show;
       if (!show) hiddenCount++;
     }
+    // Ticket ID only feeds the QR code — hide it when QR isn't on the badge.
+    const ticketLabel = $("f-ticket").closest("label");
+    ticketLabel.hidden = !layoutElements.includes("qr");
+    if (ticketLabel.hidden) hiddenCount++;
     // Position / Table No. row: collapse to one column when only one remains
     const titleShown = !$("f-title").closest("label").hidden;
     const tableShown = !$("f-table").closest("label").hidden;
@@ -268,9 +305,173 @@
       note.hidden = hiddenCount === 0;
       note.textContent = "Only fields used by your badge layout are shown — change it in Settings → Badge layout.";
     }
+    renderCustomEntryFields();
+  }
+
+  // ================= Custom field manual-entry inputs =================
+  function renderCustomEntryFields() {
+    const wrap = $("custom-entry-fields");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    const shown = layoutElements.filter((el) => customFieldDefs[el] && customFieldDefs[el].label);
+    for (const el of shown) {
+      const def = customFieldDefs[el];
+      const label = document.createElement("label");
+      label.textContent = def.label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.dataset.customEl = el;
+      input.value = customValues[el] || "";
+      input.placeholder = def.label;
+      input.addEventListener("input", () => {
+        customValues[el] = input.value.trim();
+        schedulePreview();
+      });
+      label.appendChild(input);
+      wrap.appendChild(label);
+    }
+    wrap.style.display = shown.length ? "" : "none";
   }
 
   let _layoutDragEl = null;
+  const MAX_CUSTOM_FIELDS = 6;
+
+  function attachCustomInputs(row, el) {
+    if (!customFieldDefs[el]) return;
+    const def = customFieldDefs[el];
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "custom-del";
+    del.textContent = "×";
+    del.title = "Remove custom field";
+    del.setAttribute("aria-label", "Remove custom field " + (def.label || ""));
+    del.onclick = () => {
+      delete customFieldDefs[el];
+      layoutElements = layoutElements.filter((e) => e !== el);
+      delete customValues[el];
+      renderLayoutEditor();
+      schedulePreview();
+    };
+    row.appendChild(del);
+
+    function buildView() {
+      const label = document.createElement("span");
+      label.className = "el-label custom-editable";
+      label.textContent = def.label;
+      label.title = "Click to edit";
+      const hint = document.createElement("span");
+      hint.className = "key-hint";
+      hint.textContent = def.backend_key ? "(" + def.backend_key + ")" : "(no key)";
+      label.appendChild(hint);
+      label.addEventListener("click", () => {
+        const edit = buildEdit();
+        row.replaceChild(edit, label);
+        edit.querySelector("input").focus();
+      });
+      return label;
+    }
+
+    function collapseToView() {
+      const val = labelInput.value.trim();
+      if (!val) return false;
+      def.label = val;
+      def.backend_key = keyInput.value.trim();
+      const edit = row.querySelector(".custom-inputs");
+      const view = buildView();
+      row.replaceChild(view, edit);
+      renderCustomEntryFields();
+      schedulePreview();
+      return true;
+    }
+
+    const labelInput = document.createElement("input");
+    const keyInput = document.createElement("input");
+
+    function buildEdit() {
+      const inputs = document.createElement("div");
+      inputs.className = "custom-inputs";
+
+      labelInput.type = "text";
+      labelInput.className = "row-input";
+      labelInput.value = def.label;
+      labelInput.placeholder = "Custom Field";
+      labelInput.setAttribute("aria-label", "Custom field label");
+      labelInput.addEventListener("input", () => {
+        def.label = labelInput.value.trim();
+      });
+
+      keyInput.type = "text";
+      keyInput.className = "row-input";
+      keyInput.value = def.backend_key;
+      keyInput.placeholder = "custom_field";
+      keyInput.setAttribute("aria-label", "EventzFlow field key for scan mapping");
+      keyInput.addEventListener("input", () => {
+        def.backend_key = keyInput.value.trim();
+      });
+
+      [labelInput, keyInput].forEach((inp) => {
+        inp.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+        });
+      });
+      inputs.addEventListener("focusout", () => {
+        setTimeout(() => {
+          if (!inputs.contains(document.activeElement)) collapseToView();
+        }, 0);
+      });
+
+      inputs.appendChild(labelInput);
+      inputs.appendChild(keyInput);
+      return inputs;
+    }
+
+    const labelSpan = row.querySelector(".el-label");
+    if (def.label) {
+      const view = buildView();
+      row.replaceChild(view, labelSpan);
+    } else {
+      const edit = buildEdit();
+      row.replaceChild(edit, labelSpan);
+      labelInput.focus();
+    }
+
+    // Typing in the inputs shouldn't start a row drag
+    row.addEventListener("focusin", () => { row.draggable = false; });
+    row.addEventListener("focusout", () => {
+      if (layoutElements.includes(el)) row.draggable = true;
+    });
+  }
+
+  function renderCustomFieldManager() {
+    const wrap = $("custom-fields-manager");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    const count = Object.keys(customFieldDefs).length;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ghost add-custom";
+    btn.textContent = "+ Add custom field";
+    btn.disabled = count >= MAX_CUSTOM_FIELDS;
+    btn.onclick = () => {
+      let id;
+      do { id = "custom_" + Math.random().toString(16).slice(2, 8); } while (customFieldDefs[id]);
+      customFieldDefs[id] = { label: "", backend_key: "" };
+      if (!layoutElements.includes(id)) layoutElements.push(id);
+      renderLayoutEditor();
+      schedulePreview();
+      const row = document.querySelector('.layout-el[data-el="' + id + '"]');
+      const input = row && row.querySelector(".custom-inputs input");
+      if (input) { input.focus(); }
+    };
+    wrap.appendChild(btn);
+    if (count) {
+      const note = document.createElement("span");
+      note.className = "custom-count";
+      note.textContent = count + "/" + MAX_CUSTOM_FIELDS + " custom fields";
+      wrap.appendChild(note);
+    }
+  }
 
   function layoutRow(el, enabled) {
     const row = document.createElement("div");
@@ -291,13 +492,20 @@
     };
     const label = document.createElement("span");
     label.className = "el-label";
-    label.textContent = EL_LABELS[el];
+    label.textContent = elLabel(el);
+    if (EL_BACKEND_KEYS[el]) {
+      const hint = document.createElement("span");
+      hint.className = "key-hint";
+      hint.textContent = "(" + EL_BACKEND_KEYS[el] + ")";
+      label.appendChild(hint);
+    }
     row.appendChild(cb);
     row.appendChild(label);
     if (enabled) {
       row.dataset.el = el;
       row.draggable = true;
       row.addEventListener("dragstart", (e) => {
+        if (e.target.closest("input, button, select")) { e.preventDefault(); return; }
         _layoutDragEl = row;
         row.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
@@ -343,6 +551,8 @@
   async function saveLayout(ev) {
     ev.preventDefault();
     if (!layoutElements.length) { log("layout needs at least one field", "err"); toast("Pick at least one field to print", "warn"); return; }
+    const unnamed = layoutElements.filter((el) => customFieldDefs[el] && !customFieldDefs[el].label);
+    if (unnamed.length) { toast("Give your new custom field a name first", "warn"); return; }
     const body = {
       layout: {
         paper: {
@@ -350,6 +560,7 @@
           height_mm: parseFloat($("lay-h").value),
         },
         elements: layoutElements,
+        custom_fields: customFieldDefs,
       },
     };
     try {
@@ -471,15 +682,97 @@
     await loadConfig();
     const sz = $("scan-section");
     const s = $("scan-input");
-    if (sz && sz.open && s && !s.disabled) focusScan(); else $("f-ticket").focus();
+    if (sz && sz.open && s && !s.disabled) focusScan(); else ($("f-ticket").closest("label").hidden ? $("f-name") : $("f-ticket")).focus();
     updatePreview();
   });
   setInterval(refresh, 15000);
 
-  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table"].forEach((id) => {
+  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type"].forEach((id) => {
     $(id).addEventListener("input", schedulePreview);
   });
-  $("f-type").addEventListener("change", schedulePreview);
+
+  // ================= Badge types (dropdown options) =================
+  let badgeTypes = [];
+  const MAX_BADGE_TYPES = 30;
+
+  function renderBadgeTypeOptions(selected) {
+    const sel = $("f-type");
+    sel.innerHTML = "";
+    for (const t of badgeTypes) {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    }
+    if (selected && badgeTypes.some((t) => t.toLowerCase() === selected.toLowerCase())) {
+      sel.value = selected;
+    }
+  }
+
+  function renderBadgeTypesManager() {
+    const wrap = $("badge-types-manager");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    badgeTypes.forEach((t, idx) => {
+      const row = document.createElement("div");
+      row.className = "badge-type-row";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "row-input";
+      input.value = t;
+      input.setAttribute("aria-label", "Badge type " + (idx + 1));
+      input.addEventListener("input", () => {
+        badgeTypes[idx] = input.value.trim();
+      });
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "custom-del";
+      del.textContent = "×";
+      del.title = "Remove badge type";
+      del.setAttribute("aria-label", "Remove badge type " + t);
+      del.onclick = () => {
+        badgeTypes.splice(idx, 1);
+        renderBadgeTypesManager();
+      };
+      row.append(input, del);
+      wrap.appendChild(row);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ghost add-custom";
+    add.textContent = "+ Add badge type";
+    add.disabled = badgeTypes.length >= MAX_BADGE_TYPES;
+    add.onclick = () => {
+      badgeTypes.push("");
+      renderBadgeTypesManager();
+      const inputs = wrap.querySelectorAll("input");
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    };
+    wrap.appendChild(add);
+  }
+
+  async function saveBadgeTypes() {
+    const cleaned = badgeTypes.map((t) => (t || "").trim()).filter(Boolean);
+    if (!cleaned.length) { toast("Keep at least one badge type", "warn"); return; }
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ badge_types: cleaned }),
+      });
+      const j = await r.json();
+      if (!r.ok) { log("badge types save failed: " + (j.detail || r.status), "err"); toast("Couldn't save badge types", "err"); return; }
+      const current = $("f-type").value;
+      badgeTypes = j.badge_types || cleaned;
+      renderBadgeTypeOptions(current);
+      renderBadgeTypesManager();
+      log("badge types saved", "ok");
+      toast("Badge types saved");
+    } catch (e) {
+      log("badge types save failed: " + e, "err");
+      toast("Couldn't save badge types", "err");
+    }
+  }
 
   // ================= Backend config =================
   async function loadConfig() {
@@ -492,6 +785,9 @@
       const stateEl = $("cfg-key-state");
       stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
       updateScanState(j);
+      badgeTypes = j.badge_types || [];
+      renderBadgeTypeOptions();
+      renderBadgeTypesManager();
       renderLayoutEditor(j.layout);
     } catch (e) {
       log("config load failed: " + e, "err");

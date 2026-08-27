@@ -74,18 +74,9 @@
               <input id="f-country" placeholder="Malaysia" />
             </label>
             <label>Badge type
-              <select id="f-type">
-                <option>Visitor</option>
-                <option>Delegate</option>
-                <option>Speaker</option>
-                <option>Moderator</option>
-                <option>Staff</option>
-                <option>Organizer</option>
-                <option>Exhibitor</option>
-                <option>VIP</option>
-                <option>VVIP</option>
-              </select>
+              <select id="f-type"></select>
             </label>
+            <div id="custom-entry-fields" class="custom-entry-fields" style="display:none"></div>
             <div class="actions">
               <button type="submit" class="big">Print badge</button>
             </div>
@@ -184,6 +175,16 @@
       </section>
 
       <section class="zone">
+        <h2>Badge types</h2>
+        <p class="disclaimer">The list shown in the manual-entry "Badge type" dropdown. Add the types your event uses.</p>
+        <div class="badge-types-manager" id="badge-types-manager"></div>
+        <div class="actions" style="margin-top:12px">
+          <button type="button" class="ghost" onclick="saveBadgeTypes()">Save badge types</button>
+          <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
+        </div>
+      </section>
+
+      <section class="zone">
         <h2>Badge layout</h2>
         <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. The preview updates automatically.</p>
         <form id="layout-form" onsubmit="saveLayout(event)">
@@ -203,6 +204,7 @@
             </label>
           </div>
           <div class="layout-list" id="layout-list"></div>
+          <div class="custom-fields-manager" id="custom-fields-manager"></div>
           <div class="actions">
             <button type="submit">Save layout</button>
             <button type="button" class="ghost" onclick="loadConfig()">Reload</button>

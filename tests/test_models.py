@@ -19,6 +19,26 @@ class TicketPayloadTests(unittest.TestCase):
 
         self.assertEqual(payload.company, "Youth Care Malaysia")
 
+    def test_custom_values_sanitized(self):
+        payload = TicketPayload(
+            ticket_id="A1-0245",
+            name="Test User",
+            ticket_type="Visitor",
+            custom={"Sponsor": " Acme Corp ", "": "dropped", "X" * 100: "too long key"},
+        )
+
+        self.assertEqual(payload.custom, {"Sponsor": "Acme Corp"})
+
+    def test_custom_dict_values_unwrapped(self):
+        payload = TicketPayload(
+            ticket_id="A1-0245",
+            name="Test User",
+            ticket_type="Visitor",
+            custom={"Sponsor": {"value": "Acme"}},
+        )
+
+        self.assertEqual(payload.custom, {"Sponsor": "Acme"})
+
 
 if __name__ == "__main__":
     unittest.main()

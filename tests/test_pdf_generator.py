@@ -43,6 +43,18 @@ class TicketRoleLabelTests(unittest.TestCase):
     def test_visitor_prints_unchanged(self):
         self.assertEqual(pdf_generator.normalize_role_text("Visitor"), "Visitor")
 
+    @staticmethod
+    def _block_index(events, phrase):
+        """Index of a phrase in drawn lines, tolerating word-wrap splits."""
+        for idx, line in enumerate(events):
+            if phrase in line:
+                return idx
+        words = phrase.split()
+        for i in range(len(events) - len(words) + 1):
+            if [w.strip() for w in events[i:i + len(words)]] == words:
+                return i
+        return -1
+
     def _render(self, layout):
         events = []
 
@@ -76,6 +88,7 @@ class TicketRoleLabelTests(unittest.TestCase):
             country="Malaysia",
             table_no="12",
             ticket_type="Interested Delegate",
+            custom={"custom_abc123": "Sponsor A"},
         )
 
         with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
@@ -88,28 +101,31 @@ class TicketRoleLabelTests(unittest.TestCase):
             "paper": {"width_mm": 100, "height_mm": 80},
             "elements": ["name", "role", "company", "qr"],
         })
-        self.assertLess(events.index("TEST USER"), events.index("DELEGATE"))
-        self.assertLess(events.index("DELEGATE"), events.index("TEST COMPANY"))
-        self.assertLess(events.index("TEST COMPANY"), events.index("QR"))
+        i = self._block_index
+        self.assertLess(i(events, "TEST USER"), i(events, "DELEGATE"))
+        self.assertLess(i(events, "DELEGATE"), i(events, "TEST COMPANY"))
+        self.assertLess(i(events, "TEST COMPANY"), i(events, "QR"))
 
     def test_layout_reorders_and_omits_elements(self):
         events = self._render({
             "paper": {"width_mm": 155, "height_mm": 104},
             "elements": ["name", "title", "company", "country", "role"],
         })
+        i = self._block_index
         self.assertNotIn("QR", events)
-        self.assertLess(events.index("TEST USER"), events.index("CEO"))
-        self.assertLess(events.index("CEO"), events.index("TEST COMPANY"))
-        self.assertLess(events.index("TEST COMPANY"), events.index("MALAYSIA"))
-        self.assertLess(events.index("MALAYSIA"), events.index("DELEGATE"))
+        self.assertLess(i(events, "TEST USER"), i(events, "CEO"))
+        self.assertLess(i(events, "CEO"), i(events, "TEST COMPANY"))
+        self.assertLess(i(events, "TEST COMPANY"), i(events, "MALAYSIA"))
+        self.assertLess(i(events, "MALAYSIA"), i(events, "DELEGATE"))
 
     def test_layout_with_table_no_after_role(self):
         events = self._render({
             "paper": {"width_mm": 155, "height_mm": 104},
             "elements": ["name", "company", "qr", "role", "table_no"],
         })
-        self.assertLess(events.index("QR"), events.index("DELEGATE"))
-        self.assertLess(events.index("DELEGATE"), events.index("TABLE 12"))
+        i = self._block_index
+        self.assertLess(i(events, "QR"), i(events, "DELEGATE"))
+        self.assertLess(i(events, "DELEGATE"), i(events, "TABLE 12"))
 
     def test_missing_optional_field_skipped(self):
         events = self._render({
@@ -118,6 +134,23 @@ class TicketRoleLabelTests(unittest.TestCase):
         })
         # country present in payload -> rendered; now check skip behavior via empty company
         self.assertIn("MALAYSIA", events)
+
+    def test_custom_field_renders_value(self):
+        events = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "custom_abc123", "qr"],
+        })
+        i = self._block_index
+        self.assertGreater(i(events, "SPONSOR A"), -1)
+        self.assertLess(i(events, "TEST USER"), i(events, "SPONSOR A"))
+        self.assertLess(i(events, "SPONSOR A"), i(events, "QR"))
+
+    def test_custom_field_missing_value_skipped(self):
+        events = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "custom_nope", "qr"],
+        })
+        self.assertNotIn("CUSTOM FIELD", events)
 
 
 if __name__ == "__main__":

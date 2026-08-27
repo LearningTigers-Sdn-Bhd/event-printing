@@ -4,6 +4,7 @@ import os
 import time
 import threading
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -227,7 +228,33 @@ def _safe_ticket_id(ticket_id: str) -> str:
     return cleaned
 
 
-def _ticket_payload_from_backend(data: dict) -> TicketPayload:
+def _custom_values_from_backend(custom_fields: Any, defs: Any) -> dict:
+    """Maps backend custom_fields_data into layout custom field ids.
+
+    Each layout custom field def carries a backend_key; when unset or not
+    found, falls back to a case-insensitive match on the field label.
+    """
+    if not isinstance(custom_fields, dict):
+        return {}
+    values = {}
+    lower_map = {str(k).strip().lower(): k for k in custom_fields}
+    for field_id, field_def in (defs or {}).items():
+        if not isinstance(field_def, dict):
+            continue
+        backend_key = str(field_def.get("backend_key") or "").strip()
+        raw = custom_fields.get(backend_key) if backend_key else None
+        if raw is None:
+            label = str(field_def.get("label") or "").strip()
+            match_key = lower_map.get(label.lower())
+            if match_key is not None:
+                raw = custom_fields[match_key]
+        if raw is None or raw == "":
+            continue
+        values[field_id] = raw
+    return values
+
+
+def _ticket_payload_from_backend(data: dict, custom_defs: Any = None) -> TicketPayload:
     """Maps backend ticket response into local TicketPayload."""
     custom_fields = data.get("custom_fields_data") or {}
     company = None
@@ -264,6 +291,7 @@ def _ticket_payload_from_backend(data: dict) -> TicketPayload:
         country=country,
         table_no=table_no,
         ticket_type=str(data.get("ticket_type") or "").strip() or "Visitor",
+        custom=_custom_values_from_backend(custom_fields, custom_defs),
     )
 
 
@@ -287,6 +315,7 @@ class ConfigPayload(BaseModel):
     backend_url: str | None = None
     event_slug: str | None = None
     api_key: str | None = None
+    badge_types: list | None = None
     layout: dict | None = None
 
 
@@ -333,7 +362,10 @@ def scan_ticket(public_id: str):
         raise HTTPException(status_code=502, detail=str(e))
 
     try:
-        payload = _ticket_payload_from_backend(ticket_data)
+        payload = _ticket_payload_from_backend(
+            ticket_data,
+            custom_defs=(config_store.load().get("layout") or {}).get("custom_fields"),
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Invalid ticket data from backend: {e}")
 
@@ -381,7 +413,10 @@ def reprint_ticket(public_id: str):
         raise HTTPException(status_code=502, detail=str(e))
 
     try:
-        payload = _ticket_payload_from_backend(ticket_data)
+        payload = _ticket_payload_from_backend(
+            ticket_data,
+            custom_defs=(config_store.load().get("layout") or {}).get("custom_fields"),
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Invalid ticket data from backend: {e}")
 

@@ -440,6 +440,40 @@
   .layout-list { display: grid; gap: 6px; }
   .paper-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
+  /* ================= Custom badge fields ================= */
+  .custom-fields-manager {
+    display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  }
+  .custom-fields-manager .custom-count { font-size: 12px; color: var(--muted); }
+  .layout-el.off .el-label { color: var(--muted); }
+  .el-label .key-hint {
+    color: var(--faint); font-size: 11.5px; font-weight: 400; margin-left: 6px;
+  }
+  .el-label.custom-editable { cursor: text; }
+  .el-label.custom-editable:hover .key-hint { color: var(--muted); }
+  .custom-inputs {
+    flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; min-width: 0;
+  }
+  .custom-inputs .row-input {
+    height: 28px; padding: 0 8px; font-size: 12.5px; border-radius: 6px;
+  }
+  .layout-el.off .custom-inputs .row-input { color: var(--muted); }
+  .custom-del {
+    background: none; border: 0; padding: 0 4px; margin: 0; box-shadow: none;
+    color: var(--faint); font-size: 16px; line-height: 1; cursor: pointer;
+    width: auto; height: auto; border-radius: 4px; font-weight: 400;
+    transition: color .12s var(--ease);
+  }
+  .custom-del:hover { color: var(--err); background: none; }
+  .custom-entry-fields { display: grid; gap: 12px; }
+
+  /* ================= Badge types manager ================= */
+  .badge-types-manager { display: grid; gap: 6px; }
+  .badge-type-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .badge-type-row .row-input { flex: 1; height: 30px; font-size: 13px; padding: 0 10px; }
+
   /* ================= Settings drawer ================= */
   #scrim {
     position: fixed; inset: 0; background: rgba(28, 26, 23, .45);

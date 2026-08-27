@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
-from typing import Optional, Any
+from typing import Any, Dict, Optional
 
 
 def _sanitize_str(v: Any, max_len: int = 200) -> Optional[str]:
@@ -19,6 +19,7 @@ class TicketPayload(BaseModel):
     ticket_type: str = Field(..., max_length=100, example="Delegate")
     country: Optional[str] = Field(default=None, max_length=100, example="Malaysia")
     table_no: Optional[str] = Field(default=None, max_length=50, example="12")
+    custom: Dict[str, str] = Field(default_factory=dict, example={"Sponsor": "Acme"})
 
     @model_validator(mode="before")
     @classmethod
@@ -51,3 +52,29 @@ class TicketPayload(BaseModel):
                     return _sanitize_str(val)
             return None
         return _sanitize_str(v)
+
+    @field_validator("custom", mode="before")
+    @classmethod
+    def sanitize_custom(cls, v: Any) -> Dict[str, str]:
+        if not isinstance(v, dict):
+            return {}
+        result: Dict[str, str] = {}
+        for raw_key, raw_val in v.items():
+            if not isinstance(raw_key, str) or len(raw_key) > 60:
+                continue
+            key = _sanitize_str(raw_key, 60)
+            if not key:
+                continue
+            val = raw_val
+            if isinstance(val, dict):
+                for k in ("name", "label", "value", "title"):
+                    inner = val.get(k)
+                    if isinstance(inner, str) and inner.strip():
+                        val = inner
+                        break
+                else:
+                    continue
+            text = _sanitize_str(val)
+            if text:
+                result[key] = text
+        return result
