@@ -113,6 +113,7 @@
                 <div class="last-name" id="last-name"></div>
                 <div class="last-meta" id="last-meta"></div>
                 <div class="last-reason" id="last-reason"></div>
+                <button type="button" class="ghost icon" id="last-reprint" style="display:none" onclick="reprintLastScan()">Reprint badge</button>
               </div>
             </div>
           </details>
@@ -186,7 +187,7 @@
 
       <section class="zone">
         <h2>Badge layout</h2>
-        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size or nudge position, press <strong>Adjust</strong> — sliders appear and rows stay put while you drag them. The preview updates automatically.</p>
+        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size or nudge a field up or down, press <strong>Adjust</strong> — use the size slider, and slide Y or tap − / + to nudge it. Click a field's name to spot it in the preview, which updates automatically as you adjust — no need to save first.</p>
         <div class="preset-row">
           <label>Saved layout
             <select id="layout-preset-select" onchange="onPresetChange()">

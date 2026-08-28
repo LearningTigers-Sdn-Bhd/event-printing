@@ -777,50 +777,109 @@
     return wrap;
   }
 
-  // Per-element position nudge: two ±10mm sliders (X, Y) from the
-  // auto-computed spot. 0mm on both means "no override" and isn't persisted.
+  // Per-element position nudge: a single Y (up/down) slider with − / +
+  // steppers, from the auto-computed spot. + slides the element up, − down;
+  // 0mm means "no override". X (left/right) stays supported in saved layouts
+  // but is no longer edited here. The preview re-renders live on every
+  // change — no need to press Save layout to see it.
+  const OFFSET_MIN = -10, OFFSET_MAX = 10;
+
   function offsetControl(el) {
     const wrap = document.createElement("span");
     wrap.className = "el-offset";
-    wrap.title = "Position nudge from automatic";
-    const cur = elementOffsets[el] || { dx_mm: 0, dy_mm: 0 };
+    wrap.title = "Vertical position — slide or tap − / + to nudge up or down";
+    const getCur = () => elementOffsets[el] || { dx_mm: 0, dy_mm: 0 };
 
-    function axis(labelText, axisKey, ariaSuffix) {
-      const group = document.createElement("span");
-      group.className = "el-offset-axis";
-      const tag = document.createElement("span");
-      tag.className = "el-offset-tag";
-      tag.textContent = labelText;
-      const slider = document.createElement("input");
-      slider.type = "range";
-      slider.min = "-10";
-      slider.max = "10";
-      slider.step = "1";
-      slider.value = String(cur[axisKey]);
-      slider.setAttribute("aria-label", ariaSuffix + " position for " + elLabel(el));
-      const val = document.createElement("span");
-      val.className = "el-offset-val";
-      val.textContent = slider.value + "mm";
-      slider.addEventListener("input", () => {
-        val.textContent = slider.value + "mm";
-        const n = parseInt(slider.value, 10);
-        const next = { ...(elementOffsets[el] || { dx_mm: 0, dy_mm: 0 }) };
-        next[axisKey] = n;
-        if (next.dx_mm === 0 && next.dy_mm === 0) delete elementOffsets[el];
-        else elementOffsets[el] = next;
-        schedulePreview();
-      });
-      slider.addEventListener("dblclick", () => {
-        slider.value = "0";
-        slider.dispatchEvent(new Event("input"));
-      });
-      group.append(tag, slider, val);
-      return group;
+    const tag = document.createElement("span");
+    tag.className = "el-offset-tag";
+    tag.textContent = "Y";
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = String(OFFSET_MIN);
+    slider.max = String(OFFSET_MAX);
+    slider.step = "0.5";
+    slider.value = String(getCur().dy_mm);
+    slider.setAttribute("aria-label", "Vertical position for " + elLabel(el));
+
+    const val = document.createElement("span");
+    val.className = "el-offset-val";
+    const fmt = (n) => (n > 0 ? "+" : "") + (Math.round(n * 10) / 10) + "mm";
+    const show = () => { val.textContent = fmt(getCur().dy_mm); };
+    show();
+
+    // Every accepted change routes through here: state, clamp, UI, live preview.
+    function commit(n, previewDelay) {
+      if (!isFinite(n)) n = 0;
+      n = Math.min(OFFSET_MAX, Math.max(OFFSET_MIN, Math.round(n * 10) / 10));
+      const next = { ...getCur(), dy_mm: n };
+      if (next.dx_mm === 0 && next.dy_mm === 0) delete elementOffsets[el];
+      else elementOffsets[el] = next;
+      slider.value = String(n);
+      show();
+      schedulePreview(previewDelay);
     }
 
-    wrap.appendChild(axis("X", "dx_mm", "Horizontal"));
-    wrap.appendChild(axis("Y", "dy_mm", "Vertical"));
+    slider.addEventListener("input", () => {
+      flashPreviewElement(el);
+      commit(parseFloat(slider.value), 200);
+    });
+    slider.addEventListener("dblclick", () => commit(0, 0));
+
+    // − moves down, + moves up. One tap = 0.5mm; press-and-hold repeats so
+    // bigger nudges don't need dozens of taps.
+    const bindStepper = (dir, label) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "el-offset-step";
+      btn.textContent = dir > 0 ? "+" : "−";
+      btn.setAttribute("aria-label", label + " " + elLabel(el));
+      const STEP = 0.5;
+      let holdTimer = null, repeatTimer = null;
+      const stop = () => {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+      };
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        flashPreviewElement(el);
+        commit(getCur().dy_mm + dir * STEP, 200);
+        stop();
+        holdTimer = setTimeout(() => {
+          repeatTimer = setInterval(() => commit(getCur().dy_mm + dir * STEP, 200), 90);
+        }, 350);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) =>
+        btn.addEventListener(ev, stop)
+      );
+      // Keyboard (Enter/Space) fires click with detail 0 — step once there.
+      btn.addEventListener("click", (e) => {
+        if (e.detail === 0) commit(getCur().dy_mm + dir * STEP, 200);
+      });
+      return btn;
+    };
+
+    wrap.append(tag, bindStepper(-1, "Move down"), slider, bindStepper(1, "Move up"), val);
     return wrap;
+  }
+
+  // Briefly flashes a chip over the badge preview naming the element being
+  // adjusted, so it's obvious which field the numbers belong to. The
+  // position change itself is reflected by the live preview refresh.
+  let _previewFlashTimer = null;
+  function flashPreviewElement(el) {
+    const body = document.querySelector(".preview-body");
+    if (!body) return;
+    let chip = body.querySelector(".preview-el-flash");
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.className = "preview-el-flash";
+      body.appendChild(chip);
+    }
+    chip.textContent = elLabel(el);
+    chip.classList.add("show");
+    if (_previewFlashTimer) clearTimeout(_previewFlashTimer);
+    _previewFlashTimer = setTimeout(() => chip.classList.remove("show"), 1400);
   }
 
   function layoutRow(el, enabled) {
@@ -848,6 +907,13 @@
       hint.className = "key-hint";
       hint.textContent = "(" + EL_BACKEND_KEYS[el] + ")";
       label.appendChild(hint);
+    }
+    // In Adjust mode the label becomes a "which element is this?" locator —
+    // clicking it flashes the element's name over the badge preview.
+    if (enabled && sizingMode) {
+      label.classList.add("el-locate");
+      label.title = "Click to highlight this field in the preview";
+      label.addEventListener("click", () => flashPreviewElement(el));
     }
     row.appendChild(cb);
     row.appendChild(label);
@@ -950,9 +1016,10 @@
 
   // Debounced live preview — updates as the user types
   let _previewTimer = null;
-  function schedulePreview() {
+  function schedulePreview(delay) {
     if (_previewTimer) clearTimeout(_previewTimer);
-    _previewTimer = setTimeout(updatePreview, 450);
+    _previewTimer = setTimeout(updatePreview, delay == null ? 450 : delay);
+    setPreviewChip("updating…", "busy");
   }
 
   function setPreviewChip(text, kind) {
@@ -970,6 +1037,7 @@
       elements: layoutElements,
       custom_fields: customFieldDefs,
       element_scales: elementScales,
+      element_offsets: elementOffsets,
       vertical_offset_mm: verticalOffsetMm,
     };
   }
@@ -1327,6 +1395,17 @@
     return el;
   }
 
+  // Builds the inline Reprint button — shown only on already-checked-in rows.
+  function _reprintButton(ticketId) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Reprint";
+    btn.className = "r-reprint";
+    btn.title = "Print this badge again";
+    btn.onclick = () => reprintTicket(ticketId, btn);
+    return btn;
+  }
+
   function renderScanSuccess(j) {
     const t = j.ticket || {};
     const row = _feedRow("ok");
@@ -1343,13 +1422,7 @@
     _rowName(row, t.name || t.ticket_id || "Already checked in");
     _rowTs(row);
     const meta = _rowMeta(row, "↻ Already checked in", [t.ticket_id, t.ticket_type, t.company]);
-    const reprintBtn = document.createElement("button");
-    reprintBtn.type = "button";
-    reprintBtn.textContent = "Reprint";
-    reprintBtn.className = "r-reprint";
-    const pid = t.ticket_id;
-    reprintBtn.onclick = () => reprintTicket(pid, reprintBtn);
-    meta.appendChild(reprintBtn);
+    if (t.ticket_id) meta.appendChild(_reprintButton(t.ticket_id));
     prependHistory(row);
     _updateLastScan("warn", "Already checked in", t.name, [t.ticket_id, t.ticket_type], null);
   }
@@ -1377,9 +1450,16 @@
   }
 
   // ---- LAST SCAN block ----
+  let _lastScanTicketId = null; // ticket_id of the most recent successful/duplicate scan
+
   function _updateLastScan(kind, stateWord, name, metaParts, reason) {
     const block = $("last-scan");
     block.classList.add("show");
+    // Remember the ticket behind this scan so the Reprint button can target
+    // it. Only already-checked-in (warn) scans offer reprint.
+    _lastScanTicketId = (kind === "warn") ? ((metaParts || [])[0] || null) : null;
+    const reprintBtn = $("last-reprint");
+    if (reprintBtn) reprintBtn.style.display = _lastScanTicketId ? "" : "none";
     const state = $("last-state");
     state.className = "last-state " + kind;
     const word = (kind === "ok" ? "✓ " : kind === "warn" ? "↻ " : kind === "err" ? "× " : "") + stateWord;
@@ -1488,8 +1568,14 @@
     await _drainQueue();
   }
 
+  // Reprint from the "Last scan" panel — targets the most recent scanned ticket.
+  function reprintLastScan() {
+    if (_lastScanTicketId) reprintTicket(_lastScanTicketId, $("last-reprint"));
+  }
+
   async function reprintTicket(publicId, btn) {
     if (!publicId) return;
+    const label = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Reprinting…";
     log("reprinting " + publicId + "…");
