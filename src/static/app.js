@@ -150,6 +150,11 @@
       $("info-pid").textContent = j.pid;
       $("info-uptime").textContent = formatUptime(j.uptime_seconds);
     } catch (e) { /* ignore */ }
+    try {
+      const r = await fetch("/update/status");
+      const j = await r.json();
+      _renderUpdate(j);
+    } catch (e) { /* ignore */ }
   }
 
   function formatUptime(sec) {
@@ -1148,6 +1153,133 @@
       if (r.ok) { log("printed " + payload.ticket_id, "ok"); toast("Badge printing — collect it from the printer"); }
       else { log("print failed: " + (j.detail || r.status), "err"); toast("Printing failed — check the printer", "err"); }
     } catch (e) { log("print failed: " + e, "err"); toast("Printing failed — check the printer", "err"); }
+  }
+
+  // ================= Software update =================
+  // Polls the backend updater state machine and renders the Software section.
+  // Shown only when running as the installed exe (update_supported). Flow:
+  // Check for updates -> (if newer) Update -> downloads with progress ->
+  // "Restart to update" -> app swaps the exe and relaunches itself.
+  let _updPollTimer = null;
+
+  function _updShow(id, show) { const el = $(id); if (el) el.style.display = show ? "" : "none"; }
+
+  function _renderUpdate(st) {
+    if (!st || !st.update_supported) { _updShow("update-section", false); return; }
+    _updShow("update-section", true);
+    $("upd-current").textContent = "v" + (st.current_version || "?");
+
+    const phase = st.phase || "idle";
+    const statusEl = $("upd-status");
+    const checkBtn = $("upd-check-btn");
+    const updateBtn = $("upd-update-btn");
+
+    // Latest row
+    if (st.latest) {
+      _updShow("upd-latest-row", true);
+      $("upd-latest").textContent = "v" + st.latest;
+    } else {
+      _updShow("upd-latest-row", false);
+    }
+
+    // Progress bar while downloading
+    const downloading = phase === "downloading";
+    _updShow("upd-progress", downloading);
+    if (downloading) {
+      $("upd-progress-bar").style.width = (st.progress || 0) + "%";
+    }
+
+    // Status line + which buttons are usable
+    statusEl.className = "update-status";
+    if (phase === "checking") {
+      statusEl.textContent = "Checking for updates…";
+    } else if (downloading) {
+      statusEl.textContent = "Downloading update… " + (st.progress || 0) + "%";
+    } else if (phase === "ready") {
+      statusEl.textContent = "v" + st.latest + " downloaded — restart to finish updating.";
+      statusEl.classList.add("ok");
+    } else if (phase === "applying") {
+      statusEl.textContent = "Installing update — the app will restart…";
+    } else if (phase === "error") {
+      statusEl.textContent = st.error || "Update failed.";
+      statusEl.classList.add("err");
+    } else if (st.update_available) {
+      statusEl.textContent = "Update available: v" + st.latest;
+      statusEl.classList.add("ok");
+    } else if (st.latest) {
+      statusEl.textContent = "You're on the latest version.";
+    } else {
+      statusEl.textContent = "";
+    }
+
+    // Buttons
+    checkBtn.disabled = phase === "checking" || downloading || phase === "applying";
+    const canUpdate = st.update_available && (phase === "idle" || phase === "error");
+    const canApply = phase === "ready";
+    if (canApply) {
+      updateBtn.style.display = "";
+      updateBtn.textContent = "Restart to update";
+      updateBtn.disabled = false;
+    } else if (canUpdate) {
+      updateBtn.style.display = "";
+      updateBtn.textContent = "Update";
+      updateBtn.disabled = false;
+    } else {
+      updateBtn.style.display = "none";
+    }
+  }
+
+  async function _updGet(path, opts) {
+    const r = await fetch(path, opts);
+    return r.json();
+  }
+
+  function _updStartPolling() {
+    if (_updPollTimer) clearInterval(_updPollTimer);
+    _updPollTimer = setInterval(async () => {
+      try {
+        const st = await _updGet("/update/status");
+        _renderUpdate(st);
+        // Stop polling once back to a resting state.
+        if (st.phase !== "downloading" && st.phase !== "checking" && st.phase !== "applying") {
+          clearInterval(_updPollTimer); _updPollTimer = null;
+        }
+      } catch (e) { /* server may be restarting during apply */ }
+    }, 600);
+  }
+
+  async function checkForUpdates() {
+    try {
+      const st = await _updGet("/update/check", { method: "POST" });
+      _renderUpdate(st);
+      if (st.update_available) toast("Update available: v" + st.latest);
+      else if (st.latest) toast("You're on the latest version");
+      else if (st.error) toast(st.error, "err");
+      if (st.phase === "checking") _updStartPolling();
+    } catch (e) {
+      toast("Couldn't check for updates", "err");
+    }
+  }
+
+  async function startUpdate() {
+    try {
+      // If a download already finished, this button is "Restart to update".
+      const cur = await _updGet("/update/status");
+      if (cur.phase === "ready") { await applyUpdate(); return; }
+      const st = await _updGet("/update/download", { method: "POST" });
+      _renderUpdate(st);
+      _updStartPolling();
+    } catch (e) {
+      toast("Couldn't start the update", "err");
+    }
+  }
+
+  async function applyUpdate() {
+    if (!confirm("Install the update now? The app will close and relaunch itself.")) return;
+    try {
+      await _updGet("/update/apply", { method: "POST" });
+      toast("Updating — the app will restart", "ok");
+    } catch (e) { /* process exits as part of apply; a failed fetch is expected */ }
   }
 
   async function restartServer() {

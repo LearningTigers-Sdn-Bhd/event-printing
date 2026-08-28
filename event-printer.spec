@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
+# The exe name stays constant (event-printer.exe) so the self-updater can
+# always find and replace it. The version lives in src/version.py and is
+# reported by /health; bump it there on each release.
+
 datas = [
     ('src/static', 'src/static'),
     ('src', 'src'),

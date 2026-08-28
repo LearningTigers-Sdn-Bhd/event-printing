@@ -255,6 +255,22 @@
         </div>
       </section>
 
+      <section class="zone" id="update-section" style="display:none">
+        <h2>Software update</h2>
+        <div class="info">
+          <div class="row"><span>Installed</span><span id="upd-current">—</span></div>
+          <div class="row" id="upd-latest-row" style="display:none"><span>Latest</span><span id="upd-latest">—</span></div>
+        </div>
+        <div class="update-status" id="upd-status" role="status"></div>
+        <div class="update-progress" id="upd-progress" style="display:none">
+          <div class="update-progress-bar" id="upd-progress-bar"></div>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button class="ghost icon" id="upd-check-btn" onclick="checkForUpdates()">Check for updates</button>
+          <button class="icon" id="upd-update-btn" style="display:none" onclick="startUpdate()">Update</button>
+        </div>
+      </section>
+
       <section class="zone">
         <h2>Server</h2>
         <div class="info">

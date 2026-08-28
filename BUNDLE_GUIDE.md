@@ -166,3 +166,38 @@ sudo apt install cups
 
 **Printer not detected**
 Check `/printers` endpoint, then set `PRINTER_NAME` in `.env`
+
+---
+
+## Self-Update (no more pendrive)
+
+Installed laptops can update themselves from **GitHub Releases**. The Settings
+drawer has a **Software update** section: **Check for updates** → if a newer
+release exists, an **Update** button appears → it downloads, then **Restart to
+update** swaps the exe and relaunches automatically. The old exe is kept as
+`event-printer.old` next to it for manual rollback.
+
+### Publishing a new release (what you do on the build machine)
+
+1. **Bump the version** in `src/version.py` (e.g. `1.0.0` → `1.0.1`).
+2. **Build the exe** as above — the output is always `dist/event-printer.exe`.
+3. **Create a GitHub Release** tagged with that version and attach the exe:
+
+   ```bash
+   gh release create v1.0.1 dist/event-printer.exe \
+     --title "v1.0.1" --notes "What's new in this build"
+   ```
+
+   (Or use the GitHub web UI: Releases → Draft a new release → tag `v1.0.1` →
+   upload `event-printer.exe`.)
+
+That's it. Every installed laptop will see the update the next time someone
+presses **Check for updates**.
+
+### Requirements / notes
+
+- The release **must** contain an asset named exactly `event-printer.exe`.
+- The tag should be the version number (`v1.0.1` or `1.0.1` both work).
+- Laptops need **internet access** to reach GitHub (HTTPS).
+- Works only for the **installed exe** — in dev mode the section is hidden.
+- The repo is public, so no token/credentials are needed on the laptops.

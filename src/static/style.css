@@ -553,6 +553,19 @@
   .el-label.el-locate { cursor: pointer; }
   .el-label.el-locate:hover { color: var(--accent); }
 
+  /* Software update */
+  .update-status { font-size: 12.5px; color: var(--muted); margin-top: 8px; min-height: 1em; }
+  .update-status.ok { color: var(--ok); }
+  .update-status.err { color: var(--err); }
+  .update-progress {
+    margin-top: 10px; height: 6px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); overflow: hidden;
+  }
+  .update-progress-bar {
+    height: 100%; width: 0; border-radius: 999px;
+    background: var(--accent); transition: width .25s var(--ease);
+  }
+
   /* Saved layout presets */
   .preset-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; }
   .preset-row label { flex: 1; }

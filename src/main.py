@@ -19,6 +19,8 @@ from models import TicketPayload
 from pdf_generator import generate_test_pdf, generate_ticket_pdf
 from printer import print_via_lp, list_cups_printers, get_default_printer
 import config_store
+import updater
+from version import __version__
 from api_client import BackendClient, BackendError, BackendAlreadyCheckedIn
 
 app = FastAPI(title="Event Ticket Printer")
@@ -105,7 +107,34 @@ def health():
         "ok": True,
         "printer": settings.PRINTER_NAME,
         "output_dir": settings.OUTPUT_DIR,
+        "version": __version__,
     }
+
+
+# --- Self-update (GitHub Releases) ---
+
+@app.get("/update/status")
+def update_status():
+    """Current updater state for the dashboard to poll."""
+    return updater.status()
+
+
+@app.post("/update/check")
+def update_check():
+    """Ask GitHub whether a newer release exists."""
+    return updater.check()
+
+
+@app.post("/update/download")
+def update_download():
+    """Start downloading the new exe in the background."""
+    return updater.start_download()
+
+
+@app.post("/update/apply")
+def update_apply():
+    """Swap in the downloaded exe and relaunch (this process exits)."""
+    return updater.apply()
 
 @app.get("/printers")
 def list_printers():
