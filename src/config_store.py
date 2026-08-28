@@ -24,7 +24,18 @@ DEFAULT_LAYOUT = {
     "paper": {"width_mm": 100.0, "height_mm": 80.0},
     "elements": ["name", "role", "company", "qr"],
     "element_scales": {},
+    "element_bolds": {},
     "vertical_offset_mm": 0.0,
+}
+
+# Default weight per element when the user hasn't ticked anything. Bold is
+# the default for name/role/table_no (they're the badge's headline text);
+# company/title/country/custom fields default to normal.
+DEFAULT_ELEMENT_BOLD = {
+    "name": True,
+    "role": True,
+    "table_no": True,
+    "qr": False,
 }
 
 # Per-element size multipliers (relative to the auto-fit size). 1.0 = default.
@@ -70,6 +81,21 @@ def _sanitize_element_scales(value: Any, known_elements: set) -> Dict[str, float
         if abs(scale - 1.0) < 1e-9:
             continue  # 1.0 is the default; storing it adds noise
         result[el] = round(min(MAX_ELEMENT_SCALE, max(MIN_ELEMENT_SCALE, scale)), 2)
+    return result
+
+
+def _sanitize_element_bolds(value: Any, known_elements: set) -> Dict[str, bool]:
+    """Validates {element_id: bold}; drops unknown ids and entries matching
+    the element's built-in default weight (storing defaults adds noise)."""
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, bool] = {}
+    for el, raw in value.items():
+        if not isinstance(el, str) or el not in known_elements or not isinstance(raw, bool):
+            continue
+        if raw == DEFAULT_ELEMENT_BOLD.get(el, False):
+            continue  # matches the default; no override needed
+        result[el] = raw
     return result
 
 
@@ -173,6 +199,7 @@ def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
         "elements": elements,
         "custom_fields": custom_fields,
         "element_scales": _sanitize_element_scales(value.get("element_scales"), known),
+        "element_bolds": _sanitize_element_bolds(value.get("element_bolds"), known),
         "element_offsets": _sanitize_element_offsets(value.get("element_offsets"), known),
         "vertical_offset_mm": _sanitize_vertical_offset(value.get("vertical_offset_mm")),
     }

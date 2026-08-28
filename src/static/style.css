@@ -458,39 +458,34 @@
   .layout-list { display: grid; gap: 6px; }
   .paper-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-  /* Vertical position (gap at top/bottom) */
-  .voffset-row { margin: 12px 0 10px; }
-  .voffset-row > label { display: block; margin-bottom: 6px; }
-  .voffset-row .hint {
-    display: block; font-weight: 400; font-size: 12px;
-    color: var(--muted); margin-top: 2px;
+  /* Vertical position (whole-block nudge). Its own bordered panel so it reads
+     as one grouped control, but it stays inside the layout form — Save layout
+     still saves it together with paper size and the field configuration. */
+  .voffset-panel {
+    margin: 12px 0 10px; padding: 12px 14px 10px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px;
   }
-  .voffset-ctrl { display: flex; align-items: center; gap: 8px; }
+  .voffset-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .voffset-head > label { display: block; font-weight: 600; font-size: 13.5px; color: var(--ink); }
+  .voffset-panel .hint {
+    display: block; font-weight: 400; font-size: 12px;
+    color: var(--muted); margin-top: 3px;
+  }
+  .voffset-ctrl { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
   .voffset-ctrl input[type="range"] {
     flex: 1; min-width: 0;
     appearance: auto; -webkit-appearance: auto;
     height: 18px; padding: 0; margin: 0; border: 0;
     accent-color: var(--accent); cursor: pointer; background: transparent;
   }
-  .voffset-end {
-    display: block; font-size: 9px; color: var(--muted); text-align: center;
-    line-height: 1.1; user-select: none; font-weight: 500; letter-spacing: .02em;
+  .voffset-ends {
+    display: flex; justify-content: space-between; margin-top: 1px;
+    font-size: 10.5px; color: var(--faint); font-weight: 500;
+    padding: 0 34px; /* align under the slider's ends, past the steppers */
+    user-select: none;
   }
-  .voffset-step {
-    flex-shrink: 0; width: 34px; height: 34px; padding: 2px 0 3px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 700; line-height: 1;
-    background: transparent; color: var(--ink);
-    border: 1px solid var(--line-strong); border-radius: 8px;
-    cursor: pointer; user-select: none;
-  }
-  .voffset-step:hover { border-color: var(--ink-soft); background: var(--panel-2); }
-  .voffset-step:active { transform: translateY(.5px); }
-  .voffset-val {
-    font-size: 11.5px; color: var(--muted); font-weight: 500;
-    min-width: 46px; text-align: right; font-variant-numeric: tabular-nums;
-  }
-  #lay-voffset-reset { padding: 2px 8px; font-size: 12px; }
+  .voffset-reset { padding: 2px 8px; font-size: 12px; height: auto; }
 
   /* Per-element size slider */
   .layout-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -499,30 +494,47 @@
     background: var(--accent); color: var(--accent-ink, #fff);
     border-color: var(--accent);
   }
-  .el-scale { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-  .el-scale input[type="range"] {
-    appearance: auto; -webkit-appearance: auto;
-    width: 110px; height: 18px; padding: 0; margin: 0; border: 0;
-    accent-color: var(--accent); cursor: pointer; background: transparent;
+  /* Sizing mode: each field becomes a card — header row (tick, name, Bold)
+     then one full-width row per control. Grid keeps the label + Bold on the
+     first line and the Size / Y rows stacked below, aligned and uncrowded. */
+  .layout-el.sizing {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+    column-gap: 10px; row-gap: 9px; padding: 10px 12px;
+    border-color: var(--accent); cursor: default;
   }
-  .el-scale-val {
-    font-size: 11.5px; color: var(--muted); font-weight: 500;
-    min-width: 38px; text-align: right; font-variant-numeric: tabular-nums;
-  }
-  /* Sizing mode: rows stay put, show an accent edge so it's clearly a different mode */
-  .layout-el.sizing { border-color: var(--accent); cursor: default; flex-wrap: wrap; row-gap: 6px; }
+  .layout-el.sizing .el-label { min-width: 0; }
+  .layout-el.sizing .el-scale,
+  .layout-el.sizing .el-offset { grid-column: 1 / -1; }
 
-  /* Per-element position nudge (Y up/down) — slider with − / + steppers */
-  .el-offset { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-  .el-offset-tag {
-    font-size: 11px; color: var(--faint); font-weight: 600; width: 12px; text-align: center;
+  /* Bold pill toggle in the card header — pressed (orange) means bold */
+  .el-bold {
+    justify-self: end; flex-shrink: 0;
+    height: 26px; padding: 0 12px; font-size: 12px; font-weight: 600;
+    color: var(--muted); background: transparent;
+    border: 1px solid var(--line-strong); border-radius: 7px;
+    cursor: pointer; user-select: none; touch-action: manipulation;
   }
-  .el-offset input[type="range"] {
+  .el-bold:hover { border-color: var(--ink-soft); background: var(--panel-2); }
+  .el-bold:active { transform: translateY(.5px); }
+  .el-bold.on {
+    color: var(--accent-ink, #fff); background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Size + Y control rows: tag, −, slider, +, value */
+  .el-scale, .el-offset {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+  }
+  .ctl-tag {
+    font-size: 12px; color: var(--faint); font-weight: 600;
+    width: 30px; flex-shrink: 0;
+  }
+  .el-scale input[type="range"], .el-offset input[type="range"] {
     appearance: auto; -webkit-appearance: auto;
-    width: 130px; height: 18px; padding: 0; margin: 0; border: 0;
+    flex: 1; min-width: 0; height: 18px; padding: 0; margin: 0; border: 0;
     accent-color: var(--accent); cursor: pointer; background: transparent;
   }
-  .el-offset-step {
+  .ctl-step {
     flex-shrink: 0; width: 26px; height: 26px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 16px; font-weight: 700; line-height: 1;
@@ -530,11 +542,12 @@
     border: 1px solid var(--line-strong); border-radius: 7px;
     cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation;
   }
-  .el-offset-step:hover { border-color: var(--ink-soft); background: var(--panel-2); }
-  .el-offset-step:active { transform: translateY(.5px); }
-  .el-offset-val {
+  .ctl-step:hover { border-color: var(--ink-soft); background: var(--panel-2); }
+  .ctl-step:active { transform: translateY(.5px); }
+  .ctl-val {
     font-size: 11.5px; color: var(--muted); font-weight: 500;
-    min-width: 42px; text-align: right; font-variant-numeric: tabular-nums;
+    min-width: 44px; text-align: right; font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
   }
   /* In Adjust mode the label doubles as a "locate in preview" button */
   .el-label.el-locate { cursor: pointer; }

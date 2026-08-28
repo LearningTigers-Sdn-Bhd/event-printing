@@ -187,7 +187,7 @@
 
       <section class="zone">
         <h2>Badge layout</h2>
-        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size or nudge a field up or down, press <strong>Adjust</strong> — use the size slider, and slide Y or tap − / + to nudge it. Click a field's name to spot it in the preview, which updates automatically as you adjust — no need to save first.</p>
+        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size, weight, or nudge a field up or down, press <strong>Adjust</strong> — tick <strong>B</strong> for bold, use the size slider, and slide Y or tap − / + to nudge it. Click a field's name to spot it in the preview, which updates automatically as you adjust — no need to save first.</p>
         <div class="preset-row">
           <label>Saved layout
             <select id="layout-preset-select" onchange="onPresetChange()">
@@ -213,17 +213,19 @@
               <input id="lay-h" type="number" min="20" max="500" step="0.1" required />
             </label>
           </div>
-          <div class="voffset-row">
-            <label for="lay-voffset">Vertical position
-              <span class="hint">Slide to nudge the whole block — right adds a gap at the top, left adds a gap at the bottom.</span>
-            </label>
-            <div class="voffset-ctrl">
-              <button type="button" class="voffset-step" id="lay-voffset-up" aria-label="Nudge up (gap at bottom)">−<span class="voffset-end">up</span></button>
-              <input id="lay-voffset" type="range" min="-40" max="40" step="0.5" value="0" />
-              <button type="button" class="voffset-step" id="lay-voffset-down" aria-label="Nudge down (gap at top)">+<span class="voffset-end">down</span></button>
-              <span class="voffset-val" id="lay-voffset-val">0 mm</span>
-              <button type="button" class="ghost" id="lay-voffset-reset" title="Back to centered">Reset</button>
+          <div class="voffset-panel">
+            <div class="voffset-head">
+              <label for="lay-voffset">Vertical position</label>
+              <button type="button" class="ghost voffset-reset" id="lay-voffset-reset" title="Back to centered">Reset</button>
             </div>
+            <span class="hint">Nudge the whole badge block up or down the paper.</span>
+            <div class="voffset-ctrl">
+              <button type="button" class="ctl-step" id="lay-voffset-up" aria-label="Nudge up (gap at bottom)">−</button>
+              <input id="lay-voffset" type="range" min="-40" max="40" step="0.5" value="0" />
+              <button type="button" class="ctl-step" id="lay-voffset-down" aria-label="Nudge down (gap at top)">+</button>
+              <span class="ctl-val voffset-val" id="lay-voffset-val">0 mm</span>
+            </div>
+            <div class="voffset-ends"><span>↑ up</span><span>down ↓</span></div>
           </div>
           <div class="layout-toolbar">
             <button type="button" class="ghost danger-ghost" id="layout-reset" onclick="resetLayout()">Reset layout</button>

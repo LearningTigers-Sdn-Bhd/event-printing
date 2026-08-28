@@ -47,6 +47,48 @@ class SanitizeLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(layout["custom_fields"]), config_store.MAX_CUSTOM_FIELDS)
 
 
+class ElementBoldsTests(unittest.TestCase):
+    def test_bold_override_persisted(self):
+        layout = config_store._sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "company"],
+            "element_bolds": {"name": False, "company": True},
+        })
+        self.assertEqual(layout["element_bolds"], {"name": False, "company": True})
+
+    def test_default_weight_not_stored(self):
+        # name is bold by default; storing True for it adds noise
+        layout = config_store._sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "company"],
+            "element_bolds": {"name": True, "company": False},
+        })
+        self.assertEqual(layout["element_bolds"], {})
+
+    def test_unknown_elements_dropped(self):
+        layout = config_store._sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name"],
+            "element_bolds": {"name": False, "not_a_field": True},
+        })
+        self.assertEqual(layout["element_bolds"], {"name": False})
+
+    def test_non_boolean_values_dropped(self):
+        layout = config_store._sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name"],
+            "element_bolds": {"name": "yes"},
+        })
+        self.assertEqual(layout["element_bolds"], {})
+
+    def test_missing_bolds_defaults_to_empty(self):
+        layout = config_store._sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name"],
+        })
+        self.assertEqual(layout["element_bolds"], {})
+
+
 class VerticalOffsetTests(unittest.TestCase):
     def test_offset_persisted(self):
         layout = config_store._sanitize_layout({

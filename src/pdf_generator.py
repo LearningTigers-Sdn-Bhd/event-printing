@@ -134,14 +134,13 @@ def _balanced_split(words, font_name, font_size, max_width):
     return best_split
 
 
-def get_name_lines_for_width(name: str, max_width: float):
+def get_name_lines_for_width(name: str, max_width: float, font_name: str = "Helvetica-Bold"):
     """
     Prefers the largest possible font size, even if that means wrapping
     onto two lines. Iterates per size: tries single line, then a
     balanced two-line split, before falling back to the next smaller size.
     """
     name_upper = name.upper().strip()
-    font_name = "Helvetica-Bold"
     words = name_upper.split()
 
     for font_size in [26, 24, 22, 20, 18, 16, 14, 12]:
@@ -155,13 +154,12 @@ def get_name_lines_for_width(name: str, max_width: float):
     return 11, wrap_text_to_width(name_upper, font_name, 11, max_width)
 
 
-def get_role_lines_for_width(role: str, max_width: float):
+def get_role_lines_for_width(role: str, max_width: float, font_name: str = "Helvetica-Bold"):
     """
     Same large-first wrapping strategy as the name, scaled for the
     ticket type/role line.
     """
     role_upper = role.upper().strip()
-    font_name = "Helvetica-Bold"
     words = role_upper.split()
 
     for font_size in [22, 20, 18, 16, 14, 12]:
@@ -353,7 +351,7 @@ def _auto_fit_scale(items, data: TicketPayload, h: float, max_text_width: float)
         items[:] = trial
 
 
-def _measure_element(el: str, data: TicketPayload, max_width: float, scale: float = 1.0):
+def _measure_element(el: str, data: TicketPayload, max_width: float, scale: float = 1.0, bold=None):
     """
     Measures one layout element. Returns a render item dict or None if
     the element has no content for this ticket.
@@ -363,6 +361,9 @@ def _measure_element(el: str, data: TicketPayload, max_width: float, scale: floa
     it scales the base font and the width budget together so the natural
     wrap structure is preserved; auto-fit growth caps scale along so the
     relative hierarchy the user picked survives the grow pass.
+    `bold` is a user-set weight override: True forces Helvetica-Bold,
+    False forces Helvetica, None keeps the element's built-in default
+    (name/role/table_no bold, everything else normal).
     """
     if el == "qr":
         return {"kind": "qr", "size": _QR_NATURAL * scale, "el": "qr"}
@@ -373,12 +374,16 @@ def _measure_element(el: str, data: TicketPayload, max_width: float, scale: floa
 
     fit_width = max_width / scale  # grow the box with the type: same wraps, bigger glyphs
 
+    if bold is None:
+        bold = el in ("name", "role", "table_no")
+    font = "Helvetica-Bold" if bold else "Helvetica"
+
     if el == "name":
-        font, (size, lines) = "Helvetica-Bold", get_name_lines_for_width(text, fit_width)
+        size, lines = get_name_lines_for_width(text, fit_width, font)
     elif el in ("role", "table_no"):
-        font, (size, lines) = "Helvetica-Bold", get_role_lines_for_width(text, fit_width)
+        size, lines = get_role_lines_for_width(text, fit_width, font)
     else:  # company, title, country, custom fields
-        font, (size, lines) = "Helvetica", _shrink_wrap(text, "Helvetica", fit_width)
+        size, lines = _shrink_wrap(text, font, fit_width)
 
     if not lines:
         return None
@@ -399,6 +404,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     paper = layout.get("paper") or DEFAULT_LAYOUT["paper"]
     elements = layout.get("elements") or DEFAULT_LAYOUT["elements"]
     element_scales = layout.get("element_scales") or {}
+    element_bolds = layout.get("element_bolds") or {}
     element_offsets = layout.get("element_offsets") or {}
     try:
         vertical_offset_mm = float(layout.get("vertical_offset_mm") or 0.0)
@@ -417,7 +423,8 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     items = []
     for el in elements:
         scale = element_scales.get(el, 1.0)
-        item = _measure_element(el, data, max_text_width, scale=scale)
+        item = _measure_element(el, data, max_text_width, scale=scale,
+                                bold=element_bolds.get(el))
         if item:
             item["scale"] = scale
             items.append(item)

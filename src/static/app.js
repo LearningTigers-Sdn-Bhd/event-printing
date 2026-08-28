@@ -203,11 +203,20 @@
   let customFieldDefs = {}; // id -> {label, backend_key}
   let customValues = {};    // id -> value typed in manual entry
   let elementScales = {};   // id -> size multiplier (1 = auto default)
+  let elementBolds = {};    // id -> bool weight override (absent = field's default weight)
   let elementOffsets = {};  // id -> {dx_mm, dy_mm} position nudge (0,0 = auto default)
   let sizingMode = false;   // Adjust mode: size/position sliders shown, drag disabled
   let layoutPresets = {};   // name -> layout
   let activePreset = "";    // name of the loaded preset, "" = unsaved layout
   let verticalOffsetMm = 0; // +ve pushes block down (gap at top), -ve pulls it up
+
+  // Default weight per field: bold headline fields, normal supporting text.
+  // elementBolds only stores overrides that differ from these defaults.
+  const EL_DEFAULT_BOLD = { name: true, role: true, table_no: true, qr: false };
+
+  function isBoldEl(el) {
+    return el in elementBolds ? elementBolds[el] : !!EL_DEFAULT_BOLD[el];
+  }
 
   function elLabel(el) {
     if (customFieldDefs[el]) return customFieldDefs[el].label || "New field";
@@ -334,6 +343,10 @@
         const n = parseFloat(s);
         if (isFinite(n) && n > 0) elementScales[id] = Math.min(2, Math.max(0.5, n));
       }
+      elementBolds = {};
+      for (const [id, b] of Object.entries(layout.element_bolds || {})) {
+        if (typeof b === "boolean") elementBolds[id] = b;
+      }
       elementOffsets = {};
       for (const [id, o] of Object.entries(layout.element_offsets || {})) {
         const dx = parseFloat(o && o.dx_mm), dy = parseFloat(o && o.dy_mm);
@@ -385,26 +398,28 @@
     if (list) list.classList.toggle("sizing-mode", sizingMode);
   }
 
-  // Reset every element's size and position override back to automatic.
+  // Reset every element's size, weight and position override back to automatic.
   function resetSizes() {
-    if (!Object.keys(elementScales).length && !Object.keys(elementOffsets).length) {
-      toast("Size and position are already at default", "warn"); return;
+    if (!Object.keys(elementScales).length && !Object.keys(elementBolds).length && !Object.keys(elementOffsets).length) {
+      toast("Size, weight and position are already at default", "warn"); return;
     }
-    if (!confirm("Reset all text sizes and positions back to automatic?")) return;
+    if (!confirm("Reset all text sizes, weights and positions back to automatic?")) return;
     elementScales = {};
+    elementBolds = {};
     elementOffsets = {};
     renderLayoutEditor();
     schedulePreview();
-    toast("Size and position reset to automatic");
+    toast("Size, weight and position reset to automatic");
   }
 
-  // Reset the whole layout: paper, element order/selection, sizes, offsets,
-  // and custom fields all go back to the built-in default.
+  // Reset the whole layout: paper, element order/selection, sizes, weights,
+  // offsets, and custom fields all go back to the built-in default.
   const DEFAULT_LAYOUT_STATE = {
     paper: { width_mm: 100, height_mm: 80 },
     elements: ["name", "role", "company", "qr"],
     custom_fields: {},
     element_scales: {},
+    element_bolds: {},
     element_offsets: {},
     vertical_offset_mm: 0,
   };
@@ -414,6 +429,7 @@
     layoutElements = DEFAULT_LAYOUT_STATE.elements.slice();
     customFieldDefs = {};
     elementScales = {};
+    elementBolds = {};
     elementOffsets = {};
     customValues = {};
     sizingMode = false;
@@ -474,13 +490,8 @@
   async function savePresetAs() {
     const name = (prompt("Name this layout:") || "").trim().slice(0, 40);
     if (!name) return;
-    const layout = {
-      paper: { width_mm: parseFloat($("lay-w").value), height_mm: parseFloat($("lay-h").value) },
-      elements: layoutElements,
-      custom_fields: customFieldDefs,
-      element_scales: elementScales,
-      element_offsets: elementOffsets,
-    };
+    const layout = buildLayoutState();
+    if (!layout) { toast("Pick at least one field to print", "warn"); return; }
     try {
       const r = await fetch("/config", {
         method: "PUT",
@@ -741,69 +752,136 @@
     renderLayoutEditor();
   }
 
-  // Per-element size slider: 50%–200% of the auto-fit size. 100% means
-  // "no override" and isn't persisted.
+  // Hold-to-repeat − / + stepper button shared by the Size and Y controls.
+  // One tap steps once; press-and-hold repeats after a short delay. Keyboard
+  // activation (Enter/Space) fires click with detail 0 — step once there.
+  function stepperButton(dir, label, step) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ctl-step";
+    btn.textContent = dir > 0 ? "+" : "−";
+    btn.setAttribute("aria-label", label);
+    let holdTimer = null, repeatTimer = null;
+    const stop = () => {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+    };
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      step();
+      stop();
+      holdTimer = setTimeout(() => { repeatTimer = setInterval(step, 90); }, 350);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((ev) =>
+      btn.addEventListener(ev, stop)
+    );
+    btn.addEventListener("click", (e) => { if (e.detail === 0) step(); });
+    return btn;
+  }
+
+  // Per-element size control: a labeled "Size" row with − / + steppers, a
+  // slider, and a % readout. 50%–200% of the auto-fit size; 100% means "no
+  // override" and isn't persisted.
+  const SCALE_MIN = 50, SCALE_MAX = 200, SCALE_STEP = 5;
+
   function scaleControl(el) {
-    const wrap = document.createElement("span");
+    const wrap = document.createElement("div");
     wrap.className = "el-scale";
     wrap.title = "Size relative to automatic";
 
+    const tag = document.createElement("span");
+    tag.className = "ctl-tag";
+    tag.textContent = "Size";
+
     const slider = document.createElement("input");
     slider.type = "range";
-    slider.min = "50";
-    slider.max = "200";
-    slider.step = "5";
+    slider.min = String(SCALE_MIN);
+    slider.max = String(SCALE_MAX);
+    slider.step = String(SCALE_STEP);
     slider.value = String(Math.round((elementScales[el] || 1) * 100));
     slider.setAttribute("aria-label", "Size for " + elLabel(el));
 
     const val = document.createElement("span");
-    val.className = "el-scale-val";
+    val.className = "ctl-val";
     val.textContent = slider.value + "%";
 
-    slider.addEventListener("input", () => {
-      val.textContent = slider.value + "%";
-      const scale = parseInt(slider.value, 10) / 100;
-      if (scale === 1) delete elementScales[el];
-      else elementScales[el] = scale;
-      schedulePreview();
-    });
-    slider.addEventListener("dblclick", () => {
-      slider.value = "100";
-      slider.dispatchEvent(new Event("input"));
-    });
+    // Every accepted change routes through here: state, clamp, UI, live preview.
+    function commit(n, previewDelay) {
+      if (!isFinite(n)) n = 100;
+      n = Math.min(SCALE_MAX, Math.max(SCALE_MIN, Math.round(n / SCALE_STEP) * SCALE_STEP));
+      if (n === 100) delete elementScales[el];
+      else elementScales[el] = n / 100;
+      slider.value = String(n);
+      val.textContent = n + "%";
+      schedulePreview(previewDelay);
+    }
 
-    wrap.appendChild(slider);
-    wrap.appendChild(val);
+    slider.addEventListener("input", () => {
+      flashPreviewElement(el);
+      commit(parseFloat(slider.value), 200);
+    });
+    slider.addEventListener("dblclick", () => commit(100, 0));
+
+    const step = (dir) => () => {
+      flashPreviewElement(el);
+      commit((parseFloat(slider.value) || 100) + dir * SCALE_STEP, 200);
+    };
+
+    wrap.append(tag, stepperButton(-1, "Shrink " + elLabel(el), step(-1)), slider,
+      stepperButton(1, "Grow " + elLabel(el), step(1)), val);
     return wrap;
   }
 
-  // Per-element position nudge: a single Y (up/down) slider with − / +
-  // steppers, from the auto-computed spot. + slides the element up, − down;
-  // 0mm means "no override". X (left/right) stays supported in saved layouts
-  // but is no longer edited here. The preview re-renders live on every
-  // change — no need to press Save layout to see it.
-  const OFFSET_MIN = -10, OFFSET_MAX = 10;
+  // Per-element bold toggle: a labeled "Bold" pill button in the card
+  // header. Pressed (orange) = prints bold, unpressed = normal weight. The
+  // stored value is an override — unbolding a by-default-bold field stores
+  // `false`, bolding a normal one stores `true`, matching the default
+  // stores nothing.
+  function boldControl(el) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "el-bold";
+    btn.title = "Print " + elLabel(el) + " in bold";
+    btn.setAttribute("aria-pressed", isBoldEl(el) ? "true" : "false");
+    btn.textContent = "Bold";
+    btn.addEventListener("click", () => {
+      const next = !isBoldEl(el);
+      if (next === !!EL_DEFAULT_BOLD[el]) delete elementBolds[el];
+      else elementBolds[el] = next;
+      btn.classList.toggle("on", next);
+      btn.setAttribute("aria-pressed", next ? "true" : "false");
+      schedulePreview();
+    });
+    btn.classList.toggle("on", isBoldEl(el));
+    return btn;
+  }
+
+  // Per-element position nudge: a labeled "Y" row with − / + steppers, a
+  // slider, and a mm readout. + slides the element up, − down; 0mm means
+  // "no override". X (left/right) stays supported in saved layouts but is
+  // not edited here. The preview re-renders live on every change.
+  const OFFSET_MIN = -10, OFFSET_MAX = 10, OFFSET_STEP = 0.5;
 
   function offsetControl(el) {
-    const wrap = document.createElement("span");
+    const wrap = document.createElement("div");
     wrap.className = "el-offset";
     wrap.title = "Vertical position — slide or tap − / + to nudge up or down";
     const getCur = () => elementOffsets[el] || { dx_mm: 0, dy_mm: 0 };
 
     const tag = document.createElement("span");
-    tag.className = "el-offset-tag";
+    tag.className = "ctl-tag";
     tag.textContent = "Y";
 
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = String(OFFSET_MIN);
     slider.max = String(OFFSET_MAX);
-    slider.step = "0.5";
+    slider.step = String(OFFSET_STEP);
     slider.value = String(getCur().dy_mm);
     slider.setAttribute("aria-label", "Vertical position for " + elLabel(el));
 
     const val = document.createElement("span");
-    val.className = "el-offset-val";
+    val.className = "ctl-val";
     const fmt = (n) => (n > 0 ? "+" : "") + (Math.round(n * 10) / 10) + "mm";
     const show = () => { val.textContent = fmt(getCur().dy_mm); };
     show();
@@ -826,40 +904,13 @@
     });
     slider.addEventListener("dblclick", () => commit(0, 0));
 
-    // − moves down, + moves up. One tap = 0.5mm; press-and-hold repeats so
-    // bigger nudges don't need dozens of taps.
-    const bindStepper = (dir, label) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "el-offset-step";
-      btn.textContent = dir > 0 ? "+" : "−";
-      btn.setAttribute("aria-label", label + " " + elLabel(el));
-      const STEP = 0.5;
-      let holdTimer = null, repeatTimer = null;
-      const stop = () => {
-        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
-      };
-      btn.addEventListener("pointerdown", (e) => {
-        e.preventDefault();
-        flashPreviewElement(el);
-        commit(getCur().dy_mm + dir * STEP, 200);
-        stop();
-        holdTimer = setTimeout(() => {
-          repeatTimer = setInterval(() => commit(getCur().dy_mm + dir * STEP, 200), 90);
-        }, 350);
-      });
-      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) =>
-        btn.addEventListener(ev, stop)
-      );
-      // Keyboard (Enter/Space) fires click with detail 0 — step once there.
-      btn.addEventListener("click", (e) => {
-        if (e.detail === 0) commit(getCur().dy_mm + dir * STEP, 200);
-      });
-      return btn;
+    const step = (dir) => () => {
+      flashPreviewElement(el);
+      commit(getCur().dy_mm + dir * OFFSET_STEP, 200);
     };
 
-    wrap.append(tag, bindStepper(-1, "Move down"), slider, bindStepper(1, "Move up"), val);
+    wrap.append(tag, stepperButton(-1, "Move " + elLabel(el) + " down", step(-1)), slider,
+      stepperButton(1, "Move " + elLabel(el) + " up", step(1)), val);
     return wrap;
   }
 
@@ -918,6 +969,7 @@
     row.appendChild(cb);
     row.appendChild(label);
     if (enabled && sizingMode) {
+      row.appendChild(boldControl(el));
       row.appendChild(scaleControl(el));
       row.appendChild(offsetControl(el));
     }
@@ -985,6 +1037,7 @@
       elements: layoutElements,
       custom_fields: customFieldDefs,
       element_scales: elementScales,
+      element_bolds: elementBolds,
       element_offsets: elementOffsets,
       vertical_offset_mm: verticalOffsetMm,
     };
@@ -1037,6 +1090,7 @@
       elements: layoutElements,
       custom_fields: customFieldDefs,
       element_scales: elementScales,
+      element_bolds: elementBolds,
       element_offsets: elementOffsets,
       vertical_offset_mm: verticalOffsetMm,
     };

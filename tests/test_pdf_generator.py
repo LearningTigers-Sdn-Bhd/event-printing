@@ -194,6 +194,78 @@ class TicketRoleLabelTests(unittest.TestCase):
                 pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload, layout)
         return draws
 
+    def _render_with_fonts(self, layout):
+        """Capture (text, font) pairs so we can assert on bold/normal weight."""
+        draws = []
+        current_font = [None]
+
+        class FakeCanvas:
+            def __init__(self, path, pagesize):
+                pass
+
+            def setFont(self, font_name, font_size):
+                current_font[0] = font_name
+
+            def setFillColorRGB(self, red, green, blue):
+                pass
+
+            def drawCentredString(self, x, y, text):
+                draws.append((text, current_font[0]))
+
+            def drawImage(self, image, x, y, width, height):
+                draws.append(("QR", None))
+
+            def showPage(self):
+                pass
+
+            def save(self):
+                pass
+
+        payload = types.SimpleNamespace(
+            ticket_id="A1-0245",
+            name="Test User",
+            company="Test Company",
+            title="CEO",
+            country=None,
+            table_no="12",
+            ticket_type="VIP",
+            custom={},
+        )
+
+        with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
+            with patch.object(pdf_generator, "generate_qr_image", lambda data: object()):
+                pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload, layout)
+        return draws
+
+    def test_default_weights(self):
+        draws = dict(self._render_with_fonts({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role", "company", "table_no"],
+        }))
+        self.assertEqual(draws["TEST USER"], "Helvetica-Bold")
+        self.assertEqual(draws["VIP"], "Helvetica-Bold")
+        self.assertEqual(draws["TEST COMPANY"], "Helvetica")
+        self.assertEqual(draws["TABLE 12"], "Helvetica-Bold")
+
+    def test_bold_override_unbolds_headline_field(self):
+        draws = dict(self._render_with_fonts({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role"],
+            "element_bolds": {"name": False},
+        }))
+        self.assertEqual(draws["TEST USER"], "Helvetica")
+        self.assertEqual(draws["VIP"], "Helvetica-Bold")
+
+    def test_bold_override_bolds_supporting_field(self):
+        draws = dict(self._render_with_fonts({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "company", "title"],
+            "element_bolds": {"company": True, "title": True},
+        }))
+        self.assertEqual(draws["TEST USER"], "Helvetica-Bold")
+        self.assertEqual(draws["TEST COMPANY"], "Helvetica-Bold")
+        self.assertEqual(draws["CEO"], "Helvetica-Bold")
+
     def test_vertical_offset_shifts_block_down(self):
         base_layout = {
             "paper": {"width_mm": 100, "height_mm": 80},
