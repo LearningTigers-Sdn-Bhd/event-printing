@@ -207,6 +207,7 @@
   let sizingMode = false;   // Adjust mode: size/position sliders shown, drag disabled
   let layoutPresets = {};   // name -> layout
   let activePreset = "";    // name of the loaded preset, "" = unsaved layout
+  let verticalOffsetMm = 0; // +ve pushes block down (gap at top), -ve pulls it up
 
   function elLabel(el) {
     if (customFieldDefs[el]) return customFieldDefs[el].label || "New field";
@@ -230,6 +231,79 @@
     const w = parseFloat($("lay-w").value);
     const h = parseFloat($("lay-h").value);
     $("preview-size").textContent = (isFinite(w) && isFinite(h)) ? (w + " × " + h + " mm") : "";
+  }
+
+  function _syncVoffsetUI() {
+    const slider = $("lay-voffset");
+    const val = $("lay-voffset-val");
+    if (!slider || !val) return;
+    slider.value = String(verticalOffsetMm);
+    val.textContent = (verticalOffsetMm > 0 ? "+" : "") + verticalOffsetMm + " mm";
+  }
+
+  function initVoffsetControl() {
+    const slider = $("lay-voffset");
+    const reset = $("lay-voffset-reset");
+    if (!slider) return;
+    slider.addEventListener("input", () => {
+      const n = parseFloat(slider.value);
+      verticalOffsetMm = isFinite(n) ? n : 0;
+      _syncVoffsetUI();
+      schedulePreview();
+    });
+    slider.addEventListener("dblclick", () => {
+      slider.value = "0";
+      slider.dispatchEvent(new Event("input"));
+    });
+
+    // Stepper buttons: − nudges up (gap at bottom), + nudges down (gap at
+    // top). One click = 1mm; press-and-hold repeats so coarse adjustments
+    // don't need dozens of clicks.
+    const clampStep = (delta) => {
+      const min = parseFloat(slider.min);
+      const max = parseFloat(slider.max);
+      const cur = parseFloat(slider.value) || 0;
+      const next = Math.min(max, Math.max(min, cur + delta));
+      if (next !== cur) {
+        slider.value = String(next);
+        slider.dispatchEvent(new Event("input"));
+      }
+    };
+    const bindStepper = (id, delta) => {
+      const btn = $(id);
+      if (!btn) return;
+      let holdTimer = null;
+      let repeatTimer = null;
+      const stop = () => {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+      };
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        clampStep(delta);
+        stop();
+        holdTimer = setTimeout(() => {
+          repeatTimer = setInterval(() => clampStep(delta), 70);
+        }, 350);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) =>
+        btn.addEventListener(ev, stop)
+      );
+      // Keyboard activation (Enter/Space) fires click with detail 0 — step
+      // once there since pointerdown didn't run for that interaction.
+      btn.addEventListener("click", (e) => {
+        if (e.detail === 0) clampStep(delta);
+      });
+    };
+    bindStepper("lay-voffset-up", -1);
+    bindStepper("lay-voffset-down", 1);
+
+    if (reset) {
+      reset.addEventListener("click", () => {
+        slider.value = "0";
+        slider.dispatchEvent(new Event("input"));
+      });
+    }
   }
 
   function applyPaperPreset() {
@@ -271,8 +345,11 @@
         }
       }
       layoutElements = (layout.elements || []).filter((e) => elLabel(e));
+      const vo = parseFloat(layout.vertical_offset_mm);
+      verticalOffsetMm = isFinite(vo) ? Math.min(80, Math.max(-80, vo)) : 0;
     }
     _syncPreviewSize();
+    _syncVoffsetUI();
     const list = $("layout-list");
     list.innerHTML = "";
     const disabled = Object.keys(EL_LABELS)
@@ -329,6 +406,7 @@
     custom_fields: {},
     element_scales: {},
     element_offsets: {},
+    vertical_offset_mm: 0,
   };
 
   function resetLayout() {
@@ -340,6 +418,7 @@
     customValues = {};
     sizingMode = false;
     activePreset = "";
+    verticalOffsetMm = 0;
     renderLayoutEditor(DEFAULT_LAYOUT_STATE);
     renderPresetSelect();
     schedulePreview();
@@ -841,6 +920,7 @@
       custom_fields: customFieldDefs,
       element_scales: elementScales,
       element_offsets: elementOffsets,
+      vertical_offset_mm: verticalOffsetMm,
     };
     const body = { layout };
     // Editing a loaded preset keeps that preset in sync — "Save as new" is
@@ -881,8 +961,21 @@
     chip.className = "preview-status-chip" + (kind ? " " + kind : "");
   }
 
+  function buildLayoutState() {
+    const w = parseFloat($("lay-w").value);
+    const h = parseFloat($("lay-h").value);
+    if (!isFinite(w) || !isFinite(h) || !layoutElements.length) return null;
+    return {
+      paper: { width_mm: w, height_mm: h },
+      elements: layoutElements,
+      custom_fields: customFieldDefs,
+      element_scales: elementScales,
+      vertical_offset_mm: verticalOffsetMm,
+    };
+  }
+
   async function updatePreview() {
-    const payload = buildPayload(true);
+    const payload = { ticket: buildPayload(true), layout: buildLayoutState() };
     setPreviewChip("rendering…", "busy");
     try {
       const r = await fetch("/png-preview", {
@@ -977,6 +1070,8 @@
   ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type"].forEach((id) => {
     $(id).addEventListener("input", schedulePreview);
   });
+
+  initVoffsetControl();
 
   // ================= Badge types (dropdown options) =================
   let badgeTypes = [];

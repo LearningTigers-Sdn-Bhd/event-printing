@@ -132,18 +132,31 @@ def pdf_test():
     path = generate_test_pdf(pdf_path)
     return {"ok": True, "pdf": path}
 
+class PreviewPayload(BaseModel):
+    """Ticket data plus an optional unsaved layout override for live preview."""
+    ticket: TicketPayload
+    layout: dict | None = None
+
+
+def _preview_layout(override: dict | None) -> dict | None:
+    """Sanitize an unsaved layout override; None falls back to saved config."""
+    if not override:
+        return None
+    return config_store.sanitize_layout(override)
+
+
 @app.post("/pdf-preview")
-def pdf_preview(payload: TicketPayload):
+def pdf_preview(payload: PreviewPayload):
     """Generates badge PDF and returns it for browser preview (no printing)."""
     ensure_outdir()
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket_id}-{ts}.pdf"
-    generate_ticket_pdf(pdf_path, payload)
+    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket.ticket_id}-{ts}.pdf"
+    generate_ticket_pdf(pdf_path, payload.ticket, layout=_preview_layout(payload.layout))
     return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_path.name)
 
 
 @app.post("/png-preview")
-def png_preview(payload: TicketPayload):
+def png_preview(payload: PreviewPayload):
     """Generates badge PDF and returns it as a PNG for embedded preview."""
     import fitz
     from io import BytesIO
@@ -151,8 +164,8 @@ def png_preview(payload: TicketPayload):
 
     ensure_outdir()
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket_id}-{ts}.pdf"
-    generate_ticket_pdf(pdf_path, payload)
+    pdf_path = Path(settings.OUTPUT_DIR) / f"preview-{payload.ticket.ticket_id}-{ts}.pdf"
+    generate_ticket_pdf(pdf_path, payload.ticket, layout=_preview_layout(payload.layout))
 
     doc = fitz.open(str(pdf_path))
     page = doc[0]
