@@ -203,6 +203,18 @@
               <input id="lay-h" type="number" min="20" max="500" step="0.1" required />
             </label>
           </div>
+          <div class="voffset-row">
+            <label for="lay-voffset">Vertical position
+              <span class="hint">Slide to nudge the whole block — right adds a gap at the top, left adds a gap at the bottom.</span>
+            </label>
+            <div class="voffset-ctrl">
+              <button type="button" class="voffset-step" id="lay-voffset-up" aria-label="Nudge up (gap at bottom)">−<span class="voffset-end">up</span></button>
+              <input id="lay-voffset" type="range" min="-40" max="40" step="0.5" value="0" />
+              <button type="button" class="voffset-step" id="lay-voffset-down" aria-label="Nudge down (gap at top)">+<span class="voffset-end">down</span></button>
+              <span class="voffset-val" id="lay-voffset-val">0 mm</span>
+              <button type="button" class="ghost" id="lay-voffset-reset" title="Back to centered">Reset</button>
+            </div>
+          </div>
           <div class="layout-toolbar">
             <button type="button" class="ghost danger-ghost" id="layout-reset" onclick="resetLayout()">Reset layout</button>
             <span class="spacer"></span>

@@ -152,6 +152,83 @@ class TicketRoleLabelTests(unittest.TestCase):
         })
         self.assertNotIn("CUSTOM FIELD", events)
 
+    def _render_with_coords(self, layout):
+        """Capture (text, y) pairs so we can assert on vertical placement."""
+        draws = []
+
+        class FakeCanvas:
+            def __init__(self, path, pagesize):
+                pass
+
+            def setFont(self, font_name, font_size):
+                pass
+
+            def setFillColorRGB(self, red, green, blue):
+                pass
+
+            def drawCentredString(self, x, y, text):
+                draws.append((text, y))
+
+            def drawImage(self, image, x, y, width, height):
+                draws.append(("QR", y))
+
+            def showPage(self):
+                pass
+
+            def save(self):
+                pass
+
+        payload = types.SimpleNamespace(
+            ticket_id="A1-0245",
+            name="Test User",
+            company="Test Company",
+            title=None,
+            country=None,
+            table_no=None,
+            ticket_type="VIP",
+            custom={},
+        )
+
+        with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
+            with patch.object(pdf_generator, "generate_qr_image", lambda data: object()):
+                pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload, layout)
+        return draws
+
+    def test_vertical_offset_shifts_block_down(self):
+        base_layout = {
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role"],
+        }
+        centered = dict(self._render_with_coords(base_layout))
+        shifted = dict(self._render_with_coords({**base_layout, "vertical_offset_mm": 10}))
+        # Positive offset => content pushed down the page => smaller y (PDF
+        # origin is bottom-left). Compare the name's y in both renders.
+        self.assertLess(shifted["TEST USER"], centered["TEST USER"])
+        self.assertLess(shifted["VIP"], centered["VIP"])
+        # 10 mm ≈ 28.35 pt shift
+        self.assertAlmostEqual(centered["TEST USER"] - shifted["TEST USER"], 10 / 25.4 * 72, places=1)
+
+    def test_vertical_offset_shifts_block_up(self):
+        base_layout = {
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role"],
+        }
+        centered = dict(self._render_with_coords(base_layout))
+        shifted = dict(self._render_with_coords({**base_layout, "vertical_offset_mm": -10}))
+        self.assertGreater(shifted["TEST USER"], centered["TEST USER"])
+        self.assertGreater(shifted["VIP"], centered["VIP"])
+
+    def test_vertical_offset_clamped_to_paper(self):
+        base_layout = {
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "role"],
+        }
+        # A huge downward push should clamp: content stays on the page
+        # (name baseline stays above the bottom margin).
+        draws = self._render_with_coords({**base_layout, "vertical_offset_mm": 200})
+        lowest = min(y for _, y in draws)
+        self.assertGreater(lowest, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

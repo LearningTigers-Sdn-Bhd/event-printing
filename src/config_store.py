@@ -24,11 +24,29 @@ DEFAULT_LAYOUT = {
     "paper": {"width_mm": 100.0, "height_mm": 80.0},
     "elements": ["name", "role", "company", "qr"],
     "element_scales": {},
+    "vertical_offset_mm": 0.0,
 }
 
 # Per-element size multipliers (relative to the auto-fit size). 1.0 = default.
 MIN_ELEMENT_SCALE = 0.5
 MAX_ELEMENT_SCALE = 2.0
+
+# Vertical shift of the whole content block, in mm. Positive pushes the
+# block down (adds a gap at the top); negative pulls it up (gap at the
+# bottom). 0 keeps the default centered position.
+MIN_VERTICAL_OFFSET_MM = -80.0
+MAX_VERTICAL_OFFSET_MM = 80.0
+
+
+def _sanitize_vertical_offset(value: Any) -> float:
+    """Validates a vertical offset in mm; returns 0.0 on anything unusable."""
+    try:
+        offset = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if abs(offset) < 1e-9:
+        return 0.0  # 0 is the default; storing it adds noise
+    return round(min(MAX_VERTICAL_OFFSET_MM, max(MIN_VERTICAL_OFFSET_MM, offset)), 1)
 
 
 def _sanitize_element_scales(value: Any, known_elements: set) -> Dict[str, float]:
@@ -90,6 +108,11 @@ def _sanitize_custom_fields(value: Any) -> Dict[str, Dict[str, str]]:
     return dict(list(result.items())[:MAX_CUSTOM_FIELDS])
 
 
+def sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
+    """Public wrapper around _sanitize_layout for use by preview endpoints."""
+    return _sanitize_layout(value)
+
+
 def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
     """Validate a layout dict; returns normalized layout or None if invalid."""
     if not isinstance(value, dict):
@@ -123,6 +146,7 @@ def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
         "elements": elements,
         "custom_fields": custom_fields,
         "element_scales": _sanitize_element_scales(value.get("element_scales"), known),
+        "vertical_offset_mm": _sanitize_vertical_offset(value.get("vertical_offset_mm")),
     }
 
 

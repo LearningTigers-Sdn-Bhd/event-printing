@@ -399,6 +399,10 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     paper = layout.get("paper") or DEFAULT_LAYOUT["paper"]
     elements = layout.get("elements") or DEFAULT_LAYOUT["elements"]
     element_scales = layout.get("element_scales") or {}
+    try:
+        vertical_offset_mm = float(layout.get("vertical_offset_mm") or 0.0)
+    except (TypeError, ValueError):
+        vertical_offset_mm = 0.0
 
     w = float(paper["width_mm"]) / 25.4 * inch
     h = float(paper["height_mm"]) / 25.4 * inch
@@ -423,11 +427,20 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     block_h = _block_height(items)
     usable_h = h - bottom_margin
     # Center the block in the usable area above the bottom margin — the
-    # block's lowest ink never crosses the bottom margin line.
+    # block's lowest ink never crosses the bottom margin line. Then apply
+    # the user's vertical offset: positive pushes content down (gap at the
+    # top), negative pulls it up (gap at the bottom). Clamped so the block
+    # never slides off the paper.
     if block_h >= usable_h:
         start_y = h  # shrink pass already handled this; clamp defensively
     else:
         start_y = bottom_margin + (usable_h + block_h) / 2
+    if vertical_offset_mm:
+        shift = vertical_offset_mm / 25.4 * inch
+        start_y -= shift  # PDF origin is bottom-left: subtract to move down
+        # Keep the whole block on the paper: top never above h, bottom never
+        # below bottom_margin.
+        start_y = max(bottom_margin + block_h, min(h, start_y))
 
     # --- Render ---
     current_y = start_y
