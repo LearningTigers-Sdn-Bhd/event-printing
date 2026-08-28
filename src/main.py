@@ -317,6 +317,8 @@ class ConfigPayload(BaseModel):
     api_key: str | None = None
     badge_types: list | None = None
     layout: dict | None = None
+    layout_presets: dict | None = None
+    active_preset: str | None = None
 
 
 @app.get("/config")

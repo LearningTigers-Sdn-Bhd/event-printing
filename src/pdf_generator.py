@@ -365,7 +365,7 @@ def _measure_element(el: str, data: TicketPayload, max_width: float, scale: floa
     relative hierarchy the user picked survives the grow pass.
     """
     if el == "qr":
-        return {"kind": "qr", "size": _QR_NATURAL * scale}
+        return {"kind": "qr", "size": _QR_NATURAL * scale, "el": "qr"}
 
     text = _text_for_element(el, data)
     if not text:
@@ -399,6 +399,7 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     paper = layout.get("paper") or DEFAULT_LAYOUT["paper"]
     elements = layout.get("elements") or DEFAULT_LAYOUT["elements"]
     element_scales = layout.get("element_scales") or {}
+    element_offsets = layout.get("element_offsets") or {}
 
     w = float(paper["width_mm"]) / 25.4 * inch
     h = float(paper["height_mm"]) / 25.4 * inch
@@ -435,16 +436,22 @@ def generate_ticket_pdf(path: Path, data: TicketPayload, layout: dict = None):
     for i, item in enumerate(items):
         if i > 0:
             current_y -= _gap_between(items[i - 1], item)
+        # Position nudge from the layout editor: applied only at the draw
+        # call, never to current_y, so moving one element never shoves
+        # the ones after it.
+        offset = element_offsets.get(item["el"], {})
+        dx = offset.get("dx_mm", 0) / 25.4 * inch
+        dy = offset.get("dy_mm", 0) / 25.4 * inch
         if item["kind"] == "qr":
             qr_size = item["size"]
             qr_img = generate_qr_image(data.ticket_id)
-            c.drawImage(qr_img, (w - qr_size) / 2, current_y - qr_size,
+            c.drawImage(qr_img, (w - qr_size) / 2 + dx, current_y - qr_size + dy,
                         width=qr_size, height=qr_size)
             current_y -= qr_size
         else:
             c.setFont(item["font"], item["size"])
             for line in item["lines"]:
-                c.drawCentredString(w / 2, current_y - item["line_h"], line)
+                c.drawCentredString(w / 2 + dx, current_y - item["line_h"] + dy, line)
                 current_y -= item["line_h"]
 
     c.showPage()

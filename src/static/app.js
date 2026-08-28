@@ -203,7 +203,10 @@
   let customFieldDefs = {}; // id -> {label, backend_key}
   let customValues = {};    // id -> value typed in manual entry
   let elementScales = {};   // id -> size multiplier (1 = auto default)
-  let sizingMode = false;   // Adjust-size mode: sliders shown, drag disabled
+  let elementOffsets = {};  // id -> {dx_mm, dy_mm} position nudge (0,0 = auto default)
+  let sizingMode = false;   // Adjust mode: size/position sliders shown, drag disabled
+  let layoutPresets = {};   // name -> layout
+  let activePreset = "";    // name of the loaded preset, "" = unsaved layout
 
   function elLabel(el) {
     if (customFieldDefs[el]) return customFieldDefs[el].label || "New field";
@@ -257,6 +260,16 @@
         const n = parseFloat(s);
         if (isFinite(n) && n > 0) elementScales[id] = Math.min(2, Math.max(0.5, n));
       }
+      elementOffsets = {};
+      for (const [id, o] of Object.entries(layout.element_offsets || {})) {
+        const dx = parseFloat(o && o.dx_mm), dy = parseFloat(o && o.dy_mm);
+        if (isFinite(dx) || isFinite(dy)) {
+          elementOffsets[id] = {
+            dx_mm: Math.min(10, Math.max(-10, isFinite(dx) ? dx : 0)),
+            dy_mm: Math.min(10, Math.max(-10, isFinite(dy) ? dy : 0)),
+          };
+        }
+      }
       layoutElements = (layout.elements || []).filter((e) => elLabel(e));
     }
     _syncPreviewSize();
@@ -284,7 +297,7 @@
     const btn = $("sizing-toggle");
     if (btn) {
       btn.classList.toggle("active", sizingMode);
-      btn.textContent = sizingMode ? "Done adjusting" : "Adjust size";
+      btn.textContent = sizingMode ? "Done adjusting" : "Adjust";
       btn.setAttribute("aria-pressed", sizingMode ? "true" : "false");
     }
     const resetBtn = $("sizing-reset");
@@ -295,23 +308,27 @@
     if (list) list.classList.toggle("sizing-mode", sizingMode);
   }
 
-  // Reset every element's size override back to automatic (100%).
+  // Reset every element's size and position override back to automatic.
   function resetSizes() {
-    if (!Object.keys(elementScales).length) { toast("Sizes are already at default", "warn"); return; }
-    if (!confirm("Reset all text sizes back to automatic?")) return;
+    if (!Object.keys(elementScales).length && !Object.keys(elementOffsets).length) {
+      toast("Size and position are already at default", "warn"); return;
+    }
+    if (!confirm("Reset all text sizes and positions back to automatic?")) return;
     elementScales = {};
+    elementOffsets = {};
     renderLayoutEditor();
     schedulePreview();
-    toast("Sizes reset to automatic");
+    toast("Size and position reset to automatic");
   }
 
-  // Reset the whole layout: paper, element order/selection, sizes, and
-  // custom fields all go back to the built-in default.
+  // Reset the whole layout: paper, element order/selection, sizes, offsets,
+  // and custom fields all go back to the built-in default.
   const DEFAULT_LAYOUT_STATE = {
     paper: { width_mm: 100, height_mm: 80 },
     elements: ["name", "role", "company", "qr"],
     custom_fields: {},
     element_scales: {},
+    element_offsets: {},
   };
 
   function resetLayout() {
@@ -319,11 +336,116 @@
     layoutElements = DEFAULT_LAYOUT_STATE.elements.slice();
     customFieldDefs = {};
     elementScales = {};
+    elementOffsets = {};
     customValues = {};
     sizingMode = false;
+    activePreset = "";
     renderLayoutEditor(DEFAULT_LAYOUT_STATE);
+    renderPresetSelect();
     schedulePreview();
     toast("Layout reset to default — press Save layout to keep it");
+  }
+
+  // ================= Saved layout presets =================
+  function renderPresetSelect() {
+    const sel = $("layout-preset-select");
+    if (!sel) return;
+    sel.innerHTML = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "(unsaved layout)";
+    sel.appendChild(blank);
+    for (const name of Object.keys(layoutPresets)) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+    sel.value = layoutPresets[activePreset] ? activePreset : "";
+    $("preset-delete").disabled = !sel.value;
+  }
+
+  // Loads the selected preset's layout as the working layout (persists the
+  // selection immediately, same as pressing Save layout would).
+  async function onPresetChange() {
+    const name = $("layout-preset-select").value;
+    activePreset = name;
+    $("preset-delete").disabled = !name;
+    const layout = name ? layoutPresets[name] : null;
+    if (layout) renderLayoutEditor(layout);
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(layout ? { layout, active_preset: name } : { active_preset: "" }),
+      });
+      const j = await r.json();
+      if (!r.ok) { toast("Couldn't switch layout", "err"); return; }
+      layoutPresets = j.layout_presets || {};
+      renderLayoutEditor(j.layout);
+      renderPresetSelect();
+      updatePreview();
+      toast(name ? "Loaded \"" + name + "\"" : "Switched to unsaved layout");
+    } catch (e) {
+      log("preset load failed: " + e, "err");
+      toast("Couldn't switch layout", "err");
+    }
+  }
+
+  async function savePresetAs() {
+    const name = (prompt("Name this layout:") || "").trim().slice(0, 40);
+    if (!name) return;
+    const layout = {
+      paper: { width_mm: parseFloat($("lay-w").value), height_mm: parseFloat($("lay-h").value) },
+      elements: layoutElements,
+      custom_fields: customFieldDefs,
+      element_scales: elementScales,
+      element_offsets: elementOffsets,
+    };
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          layout,
+          layout_presets: { ...layoutPresets, [name]: layout },
+          active_preset: name,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) { toast("Couldn't save preset", "err"); return; }
+      layoutPresets = j.layout_presets || {};
+      activePreset = j.active_preset || name;
+      renderPresetSelect();
+      toast("Saved \"" + name + "\"");
+    } catch (e) {
+      log("preset save failed: " + e, "err");
+      toast("Couldn't save preset", "err");
+    }
+  }
+
+  async function deletePreset() {
+    const name = $("layout-preset-select").value;
+    if (!name) return;
+    if (!confirm("Delete the saved layout \"" + name + "\"? The badge keeps its current layout either way.")) return;
+    const remaining = { ...layoutPresets };
+    delete remaining[name];
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ layout_presets: remaining, active_preset: "" }),
+      });
+      const j = await r.json();
+      if (!r.ok) { toast("Couldn't delete preset", "err"); return; }
+      layoutPresets = j.layout_presets || {};
+      activePreset = "";
+      renderPresetSelect();
+      toast("Deleted \"" + name + "\"");
+    } catch (e) {
+      log("preset delete failed: " + e, "err");
+      toast("Couldn't delete preset", "err");
+    }
   }
 
   // ================= Manual entry follows badge layout =================
@@ -576,6 +698,52 @@
     return wrap;
   }
 
+  // Per-element position nudge: two ±10mm sliders (X, Y) from the
+  // auto-computed spot. 0mm on both means "no override" and isn't persisted.
+  function offsetControl(el) {
+    const wrap = document.createElement("span");
+    wrap.className = "el-offset";
+    wrap.title = "Position nudge from automatic";
+    const cur = elementOffsets[el] || { dx_mm: 0, dy_mm: 0 };
+
+    function axis(labelText, axisKey, ariaSuffix) {
+      const group = document.createElement("span");
+      group.className = "el-offset-axis";
+      const tag = document.createElement("span");
+      tag.className = "el-offset-tag";
+      tag.textContent = labelText;
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "-10";
+      slider.max = "10";
+      slider.step = "1";
+      slider.value = String(cur[axisKey]);
+      slider.setAttribute("aria-label", ariaSuffix + " position for " + elLabel(el));
+      const val = document.createElement("span");
+      val.className = "el-offset-val";
+      val.textContent = slider.value + "mm";
+      slider.addEventListener("input", () => {
+        val.textContent = slider.value + "mm";
+        const n = parseInt(slider.value, 10);
+        const next = { ...(elementOffsets[el] || { dx_mm: 0, dy_mm: 0 }) };
+        next[axisKey] = n;
+        if (next.dx_mm === 0 && next.dy_mm === 0) delete elementOffsets[el];
+        else elementOffsets[el] = next;
+        schedulePreview();
+      });
+      slider.addEventListener("dblclick", () => {
+        slider.value = "0";
+        slider.dispatchEvent(new Event("input"));
+      });
+      group.append(tag, slider, val);
+      return group;
+    }
+
+    wrap.appendChild(axis("X", "dx_mm", "Horizontal"));
+    wrap.appendChild(axis("Y", "dy_mm", "Vertical"));
+    return wrap;
+  }
+
   function layoutRow(el, enabled) {
     const row = document.createElement("div");
     row.className = "layout-el" + (enabled ? "" : " off");
@@ -606,6 +774,7 @@
     row.appendChild(label);
     if (enabled && sizingMode) {
       row.appendChild(scaleControl(el));
+      row.appendChild(offsetControl(el));
     }
     if (enabled) {
       row.dataset.el = el;
@@ -663,17 +832,22 @@
     if (!layoutElements.length) { log("layout needs at least one field", "err"); toast("Pick at least one field to print", "warn"); return; }
     const unnamed = layoutElements.filter((el) => customFieldDefs[el] && !customFieldDefs[el].label);
     if (unnamed.length) { toast("Give your new custom field a name first", "warn"); return; }
-    const body = {
-      layout: {
-        paper: {
-          width_mm: parseFloat($("lay-w").value),
-          height_mm: parseFloat($("lay-h").value),
-        },
-        elements: layoutElements,
-        custom_fields: customFieldDefs,
-        element_scales: elementScales,
+    const layout = {
+      paper: {
+        width_mm: parseFloat($("lay-w").value),
+        height_mm: parseFloat($("lay-h").value),
       },
+      elements: layoutElements,
+      custom_fields: customFieldDefs,
+      element_scales: elementScales,
+      element_offsets: elementOffsets,
     };
+    const body = { layout };
+    // Editing a loaded preset keeps that preset in sync — "Save as new" is
+    // the only way to branch into a separate copy.
+    if (activePreset) {
+      body.layout_presets = { ...layoutPresets, [activePreset]: layout };
+    }
     try {
       const r = await fetch("/config", {
         method: "PUT",
@@ -684,6 +858,8 @@
       if (!r.ok) { log("layout save failed: " + (j.detail || r.status), "err"); toast("Couldn't save the layout", "err"); return; }
       log("layout saved", "ok");
       toast("Layout saved");
+      layoutPresets = j.layout_presets || {};
+      renderPresetSelect();
       renderLayoutEditor(j.layout);
       updatePreview();
     } catch (e) {
@@ -899,7 +1075,10 @@
       badgeTypes = j.badge_types || [];
       renderBadgeTypeOptions();
       renderBadgeTypesManager();
+      layoutPresets = j.layout_presets || {};
+      activePreset = j.active_preset || "";
       renderLayoutEditor(j.layout);
+      renderPresetSelect();
     } catch (e) {
       log("config load failed: " + e, "err");
     }

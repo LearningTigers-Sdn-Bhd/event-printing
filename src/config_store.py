@@ -30,6 +30,12 @@ DEFAULT_LAYOUT = {
 MIN_ELEMENT_SCALE = 0.5
 MAX_ELEMENT_SCALE = 2.0
 
+# Per-element position nudge, millimeters from the auto-computed spot. 0 = default.
+MAX_ELEMENT_OFFSET_MM = 10.0
+
+MAX_LAYOUT_PRESETS = 20
+MAX_PRESET_NAME_LEN = 40
+
 
 def _sanitize_element_scales(value: Any, known_elements: set) -> Dict[str, float]:
     """Validates {element_id: scale}; drops unknown ids and out-of-range values."""
@@ -46,6 +52,27 @@ def _sanitize_element_scales(value: Any, known_elements: set) -> Dict[str, float
         if abs(scale - 1.0) < 1e-9:
             continue  # 1.0 is the default; storing it adds noise
         result[el] = round(min(MAX_ELEMENT_SCALE, max(MIN_ELEMENT_SCALE, scale)), 2)
+    return result
+
+
+def _sanitize_element_offsets(value: Any, known_elements: set) -> Dict[str, Dict[str, float]]:
+    """Validates {element_id: {dx_mm, dy_mm}}; drops unknown ids and clamps range."""
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, Dict[str, float]] = {}
+    for el, raw in value.items():
+        if not isinstance(el, str) or el not in known_elements or not isinstance(raw, dict):
+            continue
+        try:
+            dx = float(raw.get("dx_mm", 0))
+            dy = float(raw.get("dy_mm", 0))
+        except (TypeError, ValueError):
+            continue
+        dx = round(min(MAX_ELEMENT_OFFSET_MM, max(-MAX_ELEMENT_OFFSET_MM, dx)), 1)
+        dy = round(min(MAX_ELEMENT_OFFSET_MM, max(-MAX_ELEMENT_OFFSET_MM, dy)), 1)
+        if dx == 0 and dy == 0:
+            continue  # (0, 0) is the default; storing it adds noise
+        result[el] = {"dx_mm": dx, "dy_mm": dy}
     return result
 
 
@@ -123,7 +150,33 @@ def _sanitize_layout(value: Any) -> Optional[Dict[str, Any]]:
         "elements": elements,
         "custom_fields": custom_fields,
         "element_scales": _sanitize_element_scales(value.get("element_scales"), known),
+        "element_offsets": _sanitize_element_offsets(value.get("element_offsets"), known),
     }
+
+
+def _sanitize_layout_presets(value: Any) -> Dict[str, Dict[str, Any]]:
+    """Validates {preset_name: layout}; drops invalid entries, caps count."""
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, Dict[str, Any]] = {}
+    for raw_name, raw_layout in value.items():
+        if not isinstance(raw_name, str):
+            continue
+        name = raw_name.strip()[:MAX_PRESET_NAME_LEN]
+        if not name:
+            continue
+        layout = _sanitize_layout(raw_layout)
+        if layout:
+            result[name] = layout
+        if len(result) >= MAX_LAYOUT_PRESETS:
+            break
+    return result
+
+
+def _sanitize_active_preset(value: Any, presets: Dict[str, Any]) -> Optional[str]:
+    if isinstance(value, str) and value in presets:
+        return value
+    return None
 
 
 def _config_dir() -> Path:
@@ -148,6 +201,8 @@ def _defaults() -> Dict[str, Any]:
         "api_key": os.environ.get("EVENTZ_API_KEY", ""),
         "badge_types": list(DEFAULT_BADGE_TYPES),
         "layout": json.loads(json.dumps(DEFAULT_LAYOUT)),
+        "layout_presets": {},
+        "active_preset": None,
     }
 
 
@@ -167,6 +222,9 @@ def load() -> Dict[str, Any]:
             layout = _sanitize_layout(stored.get("layout"))
             if layout:
                 data["layout"] = layout
+            presets = _sanitize_layout_presets(stored.get("layout_presets"))
+            data["layout_presets"] = presets
+            data["active_preset"] = _sanitize_active_preset(stored.get("active_preset"), presets)
         except (OSError, json.JSONDecodeError):
             pass
     return data
@@ -186,6 +244,10 @@ def save(values: Dict[str, Any]) -> Dict[str, Any]:
         layout = _sanitize_layout(values["layout"])
         if layout:
             current["layout"] = layout
+    if "layout_presets" in values:
+        current["layout_presets"] = _sanitize_layout_presets(values["layout_presets"])
+    if "active_preset" in values:
+        current["active_preset"] = _sanitize_active_preset(values["active_preset"], current["layout_presets"])
 
     path = config_path()
     # Create dir with 0700 so only owner can list/read it
@@ -230,4 +292,6 @@ def public_view(values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "config_path": str(config_path()),
         "badge_types": values.get("badge_types") or list(DEFAULT_BADGE_TYPES),
         "layout": values.get("layout") or json.loads(json.dumps(DEFAULT_LAYOUT)),
+        "layout_presets": values.get("layout_presets") or {},
+        "active_preset": values.get("active_preset"),
     }

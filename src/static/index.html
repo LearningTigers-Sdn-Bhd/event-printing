@@ -186,7 +186,16 @@
 
       <section class="zone">
         <h2>Badge layout</h2>
-        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size, press <strong>Adjust size</strong> — sliders appear and rows stay put while you drag them. The preview updates automatically.</p>
+        <p class="disclaimer">Choose the paper size, tick what to print on the badge, and drag rows to arrange the order. To change text size or nudge position, press <strong>Adjust</strong> — sliders appear and rows stay put while you drag them. The preview updates automatically.</p>
+        <div class="preset-row">
+          <label>Saved layout
+            <select id="layout-preset-select" onchange="onPresetChange()">
+              <option value="">(unsaved layout)</option>
+            </select>
+          </label>
+          <button type="button" class="ghost" id="preset-save-as" onclick="savePresetAs()">Save as new</button>
+          <button type="button" class="ghost danger-ghost" id="preset-delete" onclick="deletePreset()" disabled>Delete</button>
+        </div>
         <form id="layout-form" onsubmit="saveLayout(event)">
           <label>Paper size
             <select id="lay-preset" onchange="applyPaperPreset()">
@@ -206,8 +215,8 @@
           <div class="layout-toolbar">
             <button type="button" class="ghost danger-ghost" id="layout-reset" onclick="resetLayout()">Reset layout</button>
             <span class="spacer"></span>
-            <button type="button" class="ghost" id="sizing-reset" onclick="resetSizes()" style="display:none">Reset sizes</button>
-            <button type="button" class="ghost" id="sizing-toggle" onclick="toggleSizingMode()" aria-pressed="false">Adjust size</button>
+            <button type="button" class="ghost" id="sizing-reset" onclick="resetSizes()" style="display:none">Reset size/position</button>
+            <button type="button" class="ghost" id="sizing-toggle" onclick="toggleSizingMode()" aria-pressed="false">Adjust</button>
           </div>
           <div class="layout-list" id="layout-list"></div>
           <div class="custom-fields-manager" id="custom-fields-manager"></div>
