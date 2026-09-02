@@ -1,0 +1,114 @@
+name: Build & Release
+
+# Builds the single-file event-printer binary for Windows and macOS.
+# - On every push/PR touching the app, it builds + smoke-tests both platforms
+#   (artifacts only, no release) so a broken build never reaches a tag.
+# - On a version tag (v*), it additionally creates/updates the GitHub Release
+#   and attaches both assets: event-printer.exe and event-printer-mac.
+#
+# Release flow: bump src/version.py -> commit -> `git tag vX.Y.Z` -> push tag.
+# Each machine's updater pulls only its own platform's asset from the release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create releases / upload assets on tags
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            spec: event-printer.spec
+            asset: event-printer.exe
+            built: dist/event-printer.exe
+          - name: macos
+            os: macos-latest
+            spec: event-printer-mac.spec
+            asset: event-printer-mac
+            built: dist/event-printer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -q
+
+      - name: Build binary
+        run: pyinstaller ${{ matrix.spec }} --clean --noconfirm
+
+      - name: Smoke-test binary (health endpoint)
+        shell: bash
+        run: |
+          set -e
+          BIN="${{ matrix.built }}"
+          [ -f "$BIN" ] || { echo "missing $BIN"; exit 1; }
+          chmod +x "$BIN" 2>/dev/null || true
+          HEADLESS=1 PORT=8399 "./$BIN" >/tmp/ep-ci.log 2>&1 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 90); do
+            if curl -fs http://127.0.0.1:8399/health 2>/dev/null | grep -q '"ok":true'; then
+              ok=1; break
+            fi
+            kill -0 $PID 2>/dev/null || { echo "process exited"; cat /tmp/ep-ci.log; exit 1; }
+            sleep 1
+          done
+          kill $PID 2>/dev/null || true
+          [ "$ok" = "1" ] || { echo "health check failed"; cat /tmp/ep-ci.log; exit 1; }
+          echo "health OK"
+
+      - name: Stage artifact with release asset name
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp "${{ matrix.built }}" "staging/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: staging/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ls -lh assets
+          gh release create "${GITHUB_REF_NAME}" assets/* \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag
