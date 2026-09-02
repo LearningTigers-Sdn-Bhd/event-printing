@@ -6,14 +6,15 @@ Flow (all driven from the dashboard's Software section):
 3. apply()     -> launch a small helper process that waits for this process
                   to exit, swaps the exe, relaunches it, then cleans up.
 
-Only meaningful in a frozen (PyInstaller) build on Windows; in dev mode the
-endpoints report update_supported=False and the UI hides the controls.
+Only meaningful in a frozen (PyInstaller) build; in dev mode the endpoints report
+update_supported=False and the UI hides the controls.
 
 Security notes:
 - Everything comes over HTTPS from the GitHub API. The release asset URL is
   validated to stay on github.com before downloading.
-- We verify the downloaded bytes are a plausible PE executable (MZ header)
-  and non-trivial in size before swapping.
+- We verify the downloaded bytes are a plausible executable for the current
+  platform (PE "MZ" header on Windows, Mach-O on macOS) and non-trivial in
+  size before swapping.
 - The swap happens only after this process exits, so the running exe is
   never locked; a .old backup is kept alongside for manual rollback.
 """
@@ -37,8 +38,16 @@ from version import __version__
 GITHUB_REPO = "LearningTigers-Sdn-Bhd/event-printing"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
-# The asset we publish on each release (single-file Windows exe).
-ASSET_NAME = "event-printer.exe"
+# The release asset for the current platform. Each OS publishes its own
+# single-file build on the same release; the updater picks the matching one.
+def _asset_name() -> str:
+    if sys.platform == "win32":
+        return "event-printer.exe"
+    if sys.platform == "darwin":
+        return "event-printer-mac"
+    return "event-printer"  # linux / other unix
+
+ASSET_NAME = _asset_name()
 
 _HTTP_TIMEOUT = 15.0
 _MIN_EXE_BYTES = 1_000_000  # a real build is tens of MB; anything tiny is an error page
@@ -66,8 +75,8 @@ def is_frozen() -> bool:
 
 
 def update_supported() -> bool:
-    """Self-update only makes sense for the bundled Windows exe."""
-    return is_frozen() and sys.platform == "win32"
+    """Self-update only makes sense for the bundled frozen single-file build."""
+    return is_frozen()
 
 
 def _set_state(**kwargs) -> None:
@@ -119,11 +128,11 @@ def _fetch_latest_release() -> Dict[str, Any]:
     tag = data.get("tag_name") or ""
     asset_url = None
     for asset in data.get("assets", []) or []:
-        if asset.get("name") == ASSET_NAME:
+        if asset.get("name") == _asset_name():
             asset_url = asset.get("browser_download_url")
             break
     if not asset_url:
-        raise RuntimeError(f"Latest release ({tag}) has no {ASSET_NAME} asset.")
+        raise RuntimeError(f"Latest release ({tag}) has no {_asset_name()} asset.")
     return {
         "tag_name": tag,
         "url": data.get("html_url") or "",
@@ -235,14 +244,22 @@ def _download_worker(asset_url: str) -> None:
 
 
 def _verify_download(path: Path) -> None:
-    """Sanity-check the downloaded file looks like a real Windows exe."""
+    """Sanity-check the downloaded file looks like a real executable for this platform."""
     size = path.stat().st_size
     if size < _MIN_EXE_BYTES:
         raise RuntimeError("Downloaded file is too small to be the app.")
     with path.open("rb") as f:
-        magic = f.read(2)
-    if magic != b"MZ":
-        raise RuntimeError("Downloaded file isn't a Windows executable.")
+        magic = f.read(4)
+    if sys.platform == "win32":
+        if magic[:2] != b"MZ":
+            raise RuntimeError("Downloaded file isn't a Windows executable.")
+    elif sys.platform == "darwin":
+        # Mach-O magics (incl. byte-swapped + universal/fat binary).
+        if magic not in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                         b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",
+                         b"\xca\xfe\xba\xbe"):
+            raise RuntimeError("Downloaded file isn't a macOS executable.")
+    # Other platforms: the size check above is the best cheap guard.
 
 
 # --- Apply (swap + relaunch) --------------------------------------------
@@ -276,15 +293,21 @@ def apply() -> Dict[str, Any]:
 
 
 def _launch_swap_helper(exe: Path, new: Path) -> None:
-    """Write a small batch updater and launch it detached.
+    """Write a small helper script and launch it detached.
 
-    A .bat is the most robust choice on Windows: it needs no interpreter
-    (the bundled Python dies with the exe we're replacing), and `move` onto
-    the just-exited exe works once the process is gone. The helper waits for
-    this PID to exit, backs up the old exe to .old, moves the new one into
-    place, relaunches it, then deletes itself. The .old copy is left as a
-    manual rollback.
+    The script waits for this PID to exit, backs up the current binary to
+    .old, moves the new one into place, relaunches it, then deletes itself.
+    A .bat is used on Windows (no interpreter needed once the bundled Python
+    dies); a POSIX shell script does the same job on macOS/Linux. The .old
+    copy is left as a manual rollback.
     """
+    if sys.platform == "win32":
+        _launch_swap_helper_windows(exe, new)
+    else:
+        _launch_swap_helper_unix(exe, new)
+
+
+def _launch_swap_helper_windows(exe: Path, new: Path) -> None:
     old = exe.with_suffix(".old")
     bat = Path(tempfile.gettempdir()) / f"event-printer-updater-{os.getpid()}.bat"
     bat.write_text(
@@ -303,6 +326,30 @@ def _launch_swap_helper(exe: Path, new: Path) -> None:
         ["cmd", "/c", str(bat)],
         creationflags=creation_flags,
         close_fds=True,
+    )
+
+
+def _launch_swap_helper_unix(exe: Path, new: Path) -> None:
+    """macOS/Linux variant: a self-deleting /bin/sh script.
+
+    The downloaded file is made executable before the swap (the browser
+    download doesn't preserve the +x bit), and quarantine is cleared so
+    Gatekeeper doesn't block the relaunch on macOS.
+    """
+    old = exe.with_suffix(".old")
+    script = Path(tempfile.gettempdir()) / f"event-printer-updater-{os.getpid()}.sh"
+    script.write_text(
+        _HELPER_SH.format(pid=os.getpid(), exe=exe, new=new, old=old),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    subprocess.Popen(
+        ["/bin/sh", str(script)],
+        start_new_session=True,  # detach so we can exit cleanly
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -330,4 +377,28 @@ move /y "%NEW%" "%EXE%" >nul
 
 start "" /b "%EXE%"
 del /f /q "%~f0" >nul 2>&1
+"""
+# Waits for the app PID to exit, swaps the binary, relaunches, self-deletes.
+_HELPER_SH = r"""#!/bin/sh
+PID={pid}
+EXE='{exe}'
+NEW='{new}'
+OLD='{old}'
+
+# Wait until the app process is gone.
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 1
+done
+sleep 1  # let file handles fully release
+
+chmod +x "$NEW" 2>/dev/null
+# Clear macOS quarantine so Gatekeeper doesn't block the relaunch.
+xattr -d com.apple.quarantine "$NEW" 2>/dev/null
+
+rm -f "$OLD"
+[ -e "$EXE" ] && mv "$EXE" "$OLD"
+mv "$NEW" "$EXE"
+
+"$EXE" &
+rm -f "$0"
 """

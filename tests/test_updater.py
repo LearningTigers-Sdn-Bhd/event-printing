@@ -50,6 +50,67 @@ class IsNewerTests(unittest.TestCase):
         self.assertFalse(updater.is_newer("1.0", "1.0.1"))
 
 
+class AssetNameTests(unittest.TestCase):
+    def test_windows(self):
+        with patch.object(updater.sys, "platform", "win32"):
+            self.assertEqual(updater._asset_name(), "event-printer.exe")
+
+    def test_macos(self):
+        with patch.object(updater.sys, "platform", "darwin"):
+            self.assertEqual(updater._asset_name(), "event-printer-mac")
+
+    def test_linux(self):
+        with patch.object(updater.sys, "platform", "linux"):
+            self.assertEqual(updater._asset_name(), "event-printer")
+
+class VerifyDownloadTests(unittest.TestCase):
+    def _write(self, tmpdir, data):
+        p = Path(tmpdir) / "bin"
+        p.write_bytes(data)
+        return p
+
+    def _payload(self, magic):
+        # pad past _MIN_EXE_BYTES so only the magic is under test
+        return magic + b"\0" * (updater._MIN_EXE_BYTES - len(magic) + 1)
+
+    def test_too_small_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._write(d, b"MZ" + b"\0" * 100)
+            with self.assertRaises(RuntimeError):
+                updater._verify_download(p)
+
+    def test_windows_mz_accepted(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(updater.sys, "platform", "win32"):
+            p = self._write(d, self._payload(b"MZ"))
+            updater._verify_download(p)  # should not raise
+
+    def test_windows_bad_magic_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(updater.sys, "platform", "win32"):
+            p = self._write(d, self._payload(b"\x7fELF"))
+            with self.assertRaises(RuntimeError):
+                updater._verify_download(p)
+
+    def test_macos_macho_accepted(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(updater.sys, "platform", "darwin"):
+            p = self._write(d, self._payload(b"\xcf\xfa\xed\xfe"))  # 64-bit Mach-O
+            updater._verify_download(p)  # should not raise
+
+    def test_macos_bad_magic_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(updater.sys, "platform", "darwin"):
+            p = self._write(d, self._payload(b"MZ"))
+            with self.assertRaises(RuntimeError):
+                updater._verify_download(p)
+
+
 class CheckTests(unittest.TestCase):
     def _stub_release(self, tag):
         return {"tag_name": tag, "url": "http://example", "asset_url": "https://github.com/x/event-printer.exe"}

@@ -12,6 +12,7 @@ qrcode==8.2
 
 # Native desktop window
 pywebview>=5.0
+pyobjc>=10.0; sys_platform == "darwin"  # macOS window backend (WKWebView) for pywebview
 
 # HTTP client for backend integration
 httpx>=0.27

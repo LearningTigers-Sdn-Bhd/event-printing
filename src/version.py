@@ -10,4 +10,4 @@ tolerates a "v" prefix on the release tag, but the canonical value here
 stays clean.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"

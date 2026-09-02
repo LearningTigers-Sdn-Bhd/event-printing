@@ -44,45 +44,29 @@ pip install pyinstaller
 
 ## Build Commands
 
-### Linux / macOS
+### macOS
+
+Using the included spec file (bundles the WKWebView backend and all assets):
+
+```bash
+pyinstaller event-printer-mac.spec --clean --noconfirm
+mv dist/event-printer dist/event-printer-mac
+```
+
+Output: `dist/event-printer-mac` (single file). Must be built **on a Mac** —
+PyInstaller cannot cross-compile. If Gatekeeper blocks it on another machine,
+see "Running the Executable" below.
+
+### Linux
 
 ```bash
 pyinstaller --onefile --name event-printer \
   --add-data "src:src" \
-  --hidden-import fastapi \
-  --hidden-import uvicorn \
-  --hidden-import uvicorn.logging \
-  --hidden-import uvicorn.loops \
-  --hidden-import uvicorn.loops.auto \
-  --hidden-import uvicorn.protocols \
-  --hidden-import uvicorn.protocols.http \
-  --hidden-import uvicorn.protocols.http.auto \
-  --hidden-import uvicorn.protocols.websockets \
-  --hidden-import uvicorn.protocols.websockets.auto \
-  --hidden-import uvicorn.lifespan \
-  --hidden-import uvicorn.lifespan.on \
-  --hidden-import pydantic \
-  --hidden-import pydantic_settings \
-  --hidden-import reportlab \
-  --hidden-import reportlab.pdfgen \
-  --hidden-import reportlab.pdfgen.canvas \
-  --hidden-import reportlab.pdfbase \
-  --hidden-import reportlab.pdfbase.pdfmetrics \
-  --hidden-import reportlab.pdfbase.ttfonts \
-  --hidden-import reportlab.lib \
-  --hidden-import reportlab.lib.units \
-  --hidden-import reportlab.lib.utils \
-  --hidden-import qrcode \
-  --hidden-import qrcode.image.pure \
-  --hidden-import qrcode.image.pil \
-  --hidden-import dotenv \
   --collect-all reportlab \
   run_server.py
 ```
 
 Output: `dist/event-printer`
-
-> On macOS, rename the output: `mv dist/event-printer dist/event-printer-mac`
 
 ### Windows (Command Prompt or PowerShell)
 
@@ -180,24 +164,31 @@ update** swaps the exe and relaunches automatically. The old exe is kept as
 ### Publishing a new release (what you do on the build machine)
 
 1. **Bump the version** in `src/version.py` (e.g. `1.0.0` → `1.0.1`).
-2. **Build the exe** as above — the output is always `dist/event-printer.exe`.
-3. **Create a GitHub Release** tagged with that version and attach the exe:
+2. **Build the binary** as above — the output is `dist/event-printer.exe` on Windows, `dist/event-printer-mac` on macOS.
+3. **Create a GitHub Release** tagged with that version and attach the binary/binaries. To serve both Windows and macOS laptops from one release,
+   attach both assets to the same tag — each machine downloads only its own
+   platform's file:
 
    ```bash
-   gh release create v1.0.1 dist/event-printer.exe \
+   gh release create v1.0.1 dist/event-printer.exe dist/event-printer-mac \
      --title "v1.0.1" --notes "What's new in this build"
    ```
 
    (Or use the GitHub web UI: Releases → Draft a new release → tag `v1.0.1` →
-   upload `event-printer.exe`.)
+   upload the asset(s).)
 
 That's it. Every installed laptop will see the update the next time someone
 presses **Check for updates**.
 
 ### Requirements / notes
 
-- The release **must** contain an asset named exactly `event-printer.exe`.
+- The release **must** contain an asset named exactly `event-printer.exe` (Windows) and/or
+  `event-printer-mac` (macOS). A laptop only looks for its own platform's name,
+  so a release with just one asset updates only that platform.
 - The tag should be the version number (`v1.0.1` or `1.0.1` both work).
 - Laptops need **internet access** to reach GitHub (HTTPS).
-- Works only for the **installed exe** — in dev mode the section is hidden.
+- Works only for the **installed binary** — in dev mode the section is hidden.
 - The repo is public, so no token/credentials are needed on the laptops.
+- On macOS the updater clears the quarantine attribute and re-adds the
+  executable bit after download, so the relaunched binary isn't blocked by
+  Gatekeeper.
