@@ -223,6 +223,8 @@ curl -X POST http://localhost:8000/print-ticket \
     "ticket_type": "VIP"
   }'
 ```
+Badge layout **Ticket type** keeps existing `role` layout element and prints `ticket_type`. New **Role** element (`ticket_role`) prints EventzFlow ticket `role`; manual entry has separate Role field. Settings **Show Scan & check in** controls dashboard visibility only (on by default); `/scan/{public_id}` and `/scan/{public_id}/reprint` remain available when hidden.
+
 
 ---
 

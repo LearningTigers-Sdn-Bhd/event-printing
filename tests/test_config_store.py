@@ -47,6 +47,27 @@ class SanitizeLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(layout["custom_fields"]), config_store.MAX_CUSTOM_FIELDS)
 
 
+class PrinterModeTests(unittest.TestCase):
+    def test_scan_visibility_defaults_on_and_persists_off(self):
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as directory, patch.object(config_store, "_config_dir", return_value=Path(directory)):
+            self.assertTrue(config_store.load()["show_scanner"])
+            config_store.save({"show_scanner": False})
+            self.assertFalse(config_store.load()["show_scanner"])
+            self.assertFalse(config_store.public_view()["show_scanner"])
+            config_store.save({"backend_url": "https://example.com"})
+            self.assertFalse(config_store.load()["show_scanner"])
+
+    def test_ticket_role_element_is_valid_without_changing_old_ticket_type(self):
+        layout = config_store.sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["role", "ticket_role"],
+        })
+        self.assertEqual(layout["elements"], ["role", "ticket_role"])
+
+
 class ElementBoldsTests(unittest.TestCase):
     def test_bold_override_persisted(self):
         layout = config_store._sanitize_layout({

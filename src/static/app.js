@@ -87,10 +87,10 @@
     });
   })();
 
-  // ================= Scan section — opens automatically when an event is connected =================
-  function _syncScanSection(connected) {
+  // Scanner preference affects the dashboard only; API routes stay available.
+  function _syncScanSection(connected, visible) {
     const sz = $("scan-section");
-    if (sz) sz.open = !!connected;
+    if (sz) { sz.hidden = !visible; sz.open = !!connected && visible; }
   }
 
   const log = (msg, kind = "") => {
@@ -182,6 +182,7 @@
       country: $("f-country").value.trim() || null,
       table_no: $("f-table").value.trim() || null,
       ticket_type: $("f-type").value,
+      role: $("f-role").value.trim() || null,
       custom: customValues,
     };
   }
@@ -189,7 +190,8 @@
   // ================= Layout editor =================
   const EL_LABELS = {
     name: "Name",
-    role: "Role / ticket type",
+    role: "Ticket type",
+    ticket_role: "Role",
     company: "Company",
     title: "Position",
     country: "Country",
@@ -199,6 +201,7 @@
   const EL_BACKEND_KEYS = {
     name: "attendee_name",
     role: "ticket_type",
+    ticket_role: "role",
     company: "company",
     title: "title",
     country: "country",
@@ -547,6 +550,7 @@
   const FIELD_FOR_EL = {
     name: "f-name",
     role: "f-type",
+    ticket_role: "f-role",
     company: "f-company",
     title: "f-title",
     country: "f-country",
@@ -1321,7 +1325,7 @@
   });
   setInterval(refresh, 15000);
 
-  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type"].forEach((id) => {
+  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type", "f-role"].forEach((id) => {
     $(id).addEventListener("input", schedulePreview);
   });
 
@@ -1417,6 +1421,7 @@
       const j = await r.json();
       $("cfg-url").value = j.backend_url || "";
       $("cfg-slug").value = j.event_slug || "";
+      $("cfg-show-scanner").checked = j.show_scanner !== false;
       $("cfg-key").value = "";
       const stateEl = $("cfg-key-state");
       stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
@@ -1438,7 +1443,7 @@
     const btn = $("scan-btn");
     const input = $("scan-input");
     $("banner").classList.toggle("show", !ready);
-    _syncScanSection(ready);
+    _syncScanSection(ready, cfg.show_scanner !== false);
     if (!ready) {
       btn.disabled = true;
       input.disabled = true;
@@ -1455,6 +1460,7 @@
     const body = {
       backend_url: $("cfg-url").value.trim(),
       event_slug: $("cfg-slug").value.trim(),
+      show_scanner: $("cfg-show-scanner").checked,
     };
     const key = $("cfg-key").value.trim();
     if (key) body.api_key = key;
@@ -1467,7 +1473,7 @@
       const j = await r.json();
       if (!r.ok) { log("config save failed: " + (j.detail || r.status), "err"); toast("Couldn't save the settings", "err"); return; }
       log("backend config saved", "ok");
-      toast("Event connected — scanning is ready");
+      toast(j.show_scanner === false ? "Event connected — scanner hidden" : "Event connected — scanning is ready");
       $("cfg-key").value = "";
       const stateEl = $("cfg-key-state");
       stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";

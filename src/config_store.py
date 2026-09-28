@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 _APP_NAME = "event-printer"
 
-VALID_ELEMENTS = ("name", "role", "company", "title", "country", "table_no", "qr")
+VALID_ELEMENTS = ("name", "role", "ticket_role", "company", "title", "country", "table_no", "qr")
 
 CUSTOM_FIELD_ID_PREFIX = "custom_"
 MAX_CUSTOM_FIELDS = 6
@@ -254,6 +254,7 @@ def _defaults() -> Dict[str, Any]:
         "layout": json.loads(json.dumps(DEFAULT_LAYOUT)),
         "layout_presets": {},
         "active_preset": None,
+        "show_scanner": True,
     }
 
 
@@ -267,6 +268,8 @@ def load() -> Dict[str, Any]:
             for key in ("backend_url", "event_slug", "api_key"):
                 if key in stored and isinstance(stored[key], str):
                     data[key] = stored[key]
+            if isinstance(stored.get("show_scanner"), bool):
+                data["show_scanner"] = stored["show_scanner"]
             badge_types = _sanitize_badge_types(stored.get("badge_types"))
             if badge_types:
                 data["badge_types"] = badge_types
@@ -287,6 +290,8 @@ def save(values: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("backend_url", "event_slug", "api_key"):
         if key in values and isinstance(values[key], str):
             current[key] = values[key].strip()
+    if isinstance(values.get("show_scanner"), bool):
+        current["show_scanner"] = values["show_scanner"]
     if "badge_types" in values:
         badge_types = _sanitize_badge_types(values["badge_types"])
         if badge_types:
@@ -345,4 +350,5 @@ def public_view(values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "layout": values.get("layout") or json.loads(json.dumps(DEFAULT_LAYOUT)),
         "layout_presets": values.get("layout_presets") or {},
         "active_preset": values.get("active_preset"),
+        "show_scanner": values.get("show_scanner", True),
     }

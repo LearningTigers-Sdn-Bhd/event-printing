@@ -89,12 +89,20 @@ class TicketRoleLabelTests(unittest.TestCase):
             table_no="12",
             ticket_type="Interested Delegate",
             custom={"custom_abc123": "Sponsor A"},
+            role="Speaker",
         )
 
         with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
             with patch.object(pdf_generator, "generate_qr_image", lambda data: object()):
                 pdf_generator.generate_ticket_pdf(Path("ticket.pdf"), payload, layout)
         return events
+
+    def test_ticket_role_and_ticket_type_render_independently(self):
+        events = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["ticket_role", "role"],
+        })
+        self.assertLess(self._block_index(events, "SPEAKER"), self._block_index(events, "DELEGATE"))
 
     def test_badge_sections_render_in_requested_order(self):
         events = self._render({

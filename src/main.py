@@ -333,6 +333,7 @@ def _ticket_payload_from_backend(data: dict, custom_defs: Any = None) -> TicketP
         country=country,
         table_no=table_no,
         ticket_type=str(data.get("ticket_type") or "").strip() or "Visitor",
+        role=data.get("role"),
         custom=_custom_values_from_backend(custom_fields, custom_defs),
     )
 
@@ -357,6 +358,7 @@ class ConfigPayload(BaseModel):
     backend_url: str | None = None
     event_slug: str | None = None
     api_key: str | None = None
+    show_scanner: bool | None = None
     badge_types: list | None = None
     layout: dict | None = None
     layout_presets: dict | None = None

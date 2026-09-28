@@ -76,6 +76,9 @@
             <label>Badge type
               <select id="f-type"></select>
             </label>
+            <label>Role
+              <input id="f-role" placeholder="e.g., Speaker" />
+            </label>
             <div id="custom-entry-fields" class="custom-entry-fields" style="display:none"></div>
             <div class="actions">
               <button type="submit" class="big">Print badge</button>
@@ -167,6 +170,7 @@
           <label>API key <span id="cfg-key-state" style="float:right;color:var(--muted);font-weight:400;"></span>
             <input id="cfg-key" type="password" placeholder="(leave blank to keep existing)" autocomplete="off" />
           </label>
+          <label><input id="cfg-show-scanner" type="checkbox" checked /> Show Scan &amp; check in</label>
           <div class="actions">
             <button type="submit">Save</button>
             <button type="button" class="ghost" onclick="loadConfig()">Reload</button>

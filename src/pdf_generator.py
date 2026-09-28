@@ -226,6 +226,8 @@ def _text_for_element(el: str, data: TicketPayload):
         return data.name
     if el == "role":
         return normalize_role_text(data.ticket_type or "")
+    if el == "ticket_role":
+        return data.role
     if el == "company":
         return data.company
     if el == "title":
