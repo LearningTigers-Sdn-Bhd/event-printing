@@ -92,6 +92,28 @@ def _thicken(img):
     return img.convert("L").filter(ImageFilter.MinFilter(3)).convert("RGB")
 
 
+def _debug_dump(bw_img, info: Dict[str, Any]) -> None:
+    """
+    Direct-thermal mode only: record what is about to be sent to the printer
+    (sizes, DPI, share of black pixels) and keep a copy of the exact bitmap, in
+    %TEMP%\\event-printer-print.log and event-printer-last-print.png. Never raises.
+    """
+    try:
+        import os
+        import tempfile
+        from datetime import datetime
+        gray = bw_img.convert("L")
+        hist = gray.histogram()
+        info["black_pct"] = round(100 * hist[0] / max(1, gray.width * gray.height), 1)
+        info["bitmap"] = gray.size
+        base = tempfile.gettempdir()
+        gray.save(os.path.join(base, "event-printer-last-print.png"))
+        with open(os.path.join(base, "event-printer-print.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {info}\n")
+    except Exception:
+        pass
+
+
 def _create_printer_dc(printer_name: str, hprinter):
     """
     Create the printer DC, forcing paper size from the saved layout config
@@ -182,7 +204,10 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
                 # below is ~1:1 and strokes don't thin out.
                 dpi = 200
                 if direct_thermal:
-                    dpi = hdc.GetDeviceCaps(win32con.LOGPIXELSX)
+                    try:
+                        dpi = hdc.GetDeviceCaps(win32con.LOGPIXELSX)
+                    except Exception:
+                        dpi = 203
                     if not 100 <= dpi <= 1200:
                         dpi = 203
                 zoom = dpi / 72
@@ -229,6 +254,12 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
                 # Printer is 1-bit: threshold here or the driver halftone-dithers
                 # the grey anti-aliased edges into visible dots on the text.
                 bmp_resized = bmp_resized.convert('L').point(lambda v: 0 if v < 220 else 255, mode='1')
+                if direct_thermal:
+                    _debug_dump(bmp_resized, {
+                        "dpi": dpi, "page_px": (pix.width, pix.height),
+                        "printer_px": (printer_width, printer_height),
+                        "scale": round(scale, 3), "draw_px": (width, height),
+                    })
 
                 # Save resized version
                 bmp_resized.save(tmp_path, 'BMP')
@@ -265,6 +296,15 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
                 "pages": num_pages
             }
             
+        except Exception:
+            # Cancel the half-sent job so it doesn't sit in the spooler and
+            # block every later print.
+            try:
+                hdc.AbortDoc()
+                hdc.DeleteDC()
+            except Exception:
+                pass
+            raise
         finally:
             win32print.ClosePrinter(hprinter)
             
