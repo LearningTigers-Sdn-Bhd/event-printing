@@ -255,6 +255,7 @@ def _defaults() -> Dict[str, Any]:
         "layout_presets": {},
         "active_preset": None,
         "show_scanner": True,
+        "direct_thermal": False,
     }
 
 
@@ -270,6 +271,8 @@ def load() -> Dict[str, Any]:
                     data[key] = stored[key]
             if isinstance(stored.get("show_scanner"), bool):
                 data["show_scanner"] = stored["show_scanner"]
+            if isinstance(stored.get("direct_thermal"), bool):
+                data["direct_thermal"] = stored["direct_thermal"]
             badge_types = _sanitize_badge_types(stored.get("badge_types"))
             if badge_types:
                 data["badge_types"] = badge_types
@@ -292,6 +295,8 @@ def save(values: Dict[str, Any]) -> Dict[str, Any]:
             current[key] = values[key].strip()
     if isinstance(values.get("show_scanner"), bool):
         current["show_scanner"] = values["show_scanner"]
+    if isinstance(values.get("direct_thermal"), bool):
+        current["direct_thermal"] = values["direct_thermal"]
     if "badge_types" in values:
         badge_types = _sanitize_badge_types(values["badge_types"])
         if badge_types:
@@ -351,4 +356,5 @@ def public_view(values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "layout_presets": values.get("layout_presets") or {},
         "active_preset": values.get("active_preset"),
         "show_scanner": values.get("show_scanner", True),
+        "direct_thermal": values.get("direct_thermal", False),
     }

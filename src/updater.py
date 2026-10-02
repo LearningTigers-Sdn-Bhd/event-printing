@@ -292,14 +292,20 @@ def apply() -> Dict[str, Any]:
     return status()
 
 
-def _launch_swap_helper(exe: Path, new: Path) -> None:
+def _launch_swap_helper(exe: Path, new: Optional[Path]) -> None:
     """Write a small helper script and launch it detached.
 
-    The script waits for this PID to exit, backs up the current binary to
-    .old, moves the new one into place, relaunches it, then deletes itself.
-    A .bat is used on Windows (no interpreter needed once the bundled Python
-    dies); a POSIX shell script does the same job on macOS/Linux. The .old
-    copy is left as a manual rollback.
+    The script waits for this app to fully exit, swaps in `new` (skipped
+    when None, i.e. a plain restart), keeps the old binary as .old, then
+    starts a fresh copy and deletes itself. A .bat is used on Windows (no
+    interpreter needed once the bundled Python dies); a POSIX shell script
+    does the same job on macOS/Linux. Progress is appended to
+    event-printer-update.log in the temp folder for diagnosing failures.
+
+    Why not just os.execv: on Windows execv spawns a child and exits, and a
+    PyInstaller one-file child inheriting this process's environment tries to
+    reuse the temp folder that is deleted on exit, so it dies. The scripts
+    reset that environment before relaunching.
     """
     if sys.platform == "win32":
         _launch_swap_helper_windows(exe, new)
@@ -307,41 +313,49 @@ def _launch_swap_helper(exe: Path, new: Path) -> None:
         _launch_swap_helper_unix(exe, new)
 
 
-def _launch_swap_helper_windows(exe: Path, new: Path) -> None:
-    old = exe.with_suffix(".old")
-    bat = Path(tempfile.gettempdir()) / f"event-printer-updater-{os.getpid()}.bat"
-    bat.write_text(
-        _HELPER_BAT.format(
-            pid=os.getpid(), exe=exe, new=new, old=old
-        ),
-        encoding="utf-8",
+def restart() -> None:
+    """Relaunch the app (no swap). The caller must exit the process afterwards."""
+    _launch_swap_helper(_target_exe(), None)
+
+
+def _helper_fields(exe: Path, new: Optional[Path]) -> Dict[str, Any]:
+    return dict(
+        pid=os.getpid(),
+        ppid=os.getppid(),
+        exe=exe,
+        exe_name=exe.name,
+        exe_dir=exe.parent,
+        new=str(new) if new else "",
+        old=exe.with_suffix(".old"),
     )
 
-    creation_flags = (
-        subprocess.CREATE_NO_WINDOW
-        | subprocess.DETACHED_PROCESS
-        | subprocess.CREATE_NEW_PROCESS_GROUP
-    )
+
+def _launch_swap_helper_windows(exe: Path, new: Optional[Path]) -> None:
+    bat = Path(tempfile.gettempdir()) / f"event-printer-updater-{os.getpid()}.bat"
+    bat.write_text(_HELPER_BAT.format(**_helper_fields(exe, new)), encoding="utf-8")
+
+    # No DETACHED_PROCESS: Windows ignores CREATE_NO_WINDOW when combined with
+    # it, so cmd would pop up its own console window.
+    creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(
         ["cmd", "/c", str(bat)],
         creationflags=creation_flags,
         close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
-def _launch_swap_helper_unix(exe: Path, new: Path) -> None:
+def _launch_swap_helper_unix(exe: Path, new: Optional[Path]) -> None:
     """macOS/Linux variant: a self-deleting /bin/sh script.
 
     The downloaded file is made executable before the swap (the browser
     download doesn't preserve the +x bit), and quarantine is cleared so
     Gatekeeper doesn't block the relaunch on macOS.
     """
-    old = exe.with_suffix(".old")
     script = Path(tempfile.gettempdir()) / f"event-printer-updater-{os.getpid()}.sh"
-    script.write_text(
-        _HELPER_SH.format(pid=os.getpid(), exe=exe, new=new, old=old),
-        encoding="utf-8",
-    )
+    script.write_text(_HELPER_SH.format(**_helper_fields(exe, new)), encoding="utf-8")
     script.chmod(0o755)
     subprocess.Popen(
         ["/bin/sh", str(script)],
@@ -353,52 +367,119 @@ def _launch_swap_helper_unix(exe: Path, new: Path) -> None:
     )
 
 
-# Waits for the app PID to exit, swaps the exe, relaunches, self-deletes.
-# ~1s poll via ping is the classic no-extra-tools sleep on Windows.
+# Waits for the app (python process, then the PyInstaller launcher that
+# holds the exe) to exit, swaps the exe if there is a download, relaunches
+# with a clean one-file environment, self-deletes. ~1s poll via ping is the
+# classic no-extra-tools sleep on Windows.
 _HELPER_BAT = r"""@echo off
 set "PID={pid}"
+set "PARENT={ppid}"
 set "EXE={exe}"
+set "EXENAME={exe_name}"
 set "NEW={new}"
 set "OLD={old}"
+set "LOG=%TEMP%\event-printer-update.log"
+echo [%date% %time%] helper start pid=%PID% parent=%PARENT% new=%NEW% >> "%LOG%"
 
-:wait
-tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul
-if %errorlevel%==0 (
-  ping -n 2 127.0.0.1 >nul
-  goto wait
+set /a N=0
+:waitpid
+tasklist /FI "PID eq %PID%" 2>nul | find " %PID% " >nul
+if errorlevel 1 goto waitparent
+set /a N+=1
+if %N% geq 60 goto waitparent
+ping -n 2 127.0.0.1 >nul
+goto waitpid
+
+:waitparent
+rem the PyInstaller launcher outlives the python process briefly and keeps the exe busy
+set /a N=0
+:waitparent2
+tasklist /FI "PID eq %PARENT%" /FI "IMAGENAME eq %EXENAME%" 2>nul | find " %PARENT% " >nul
+if errorlevel 1 goto swap
+set /a N+=1
+if %N% geq 60 goto swap
+ping -n 2 127.0.0.1 >nul
+goto waitparent2
+
+:swap
+rem settle so file handles and the old temp folder are released
+ping -n 3 127.0.0.1 >nul
+if not defined NEW goto launch
+if not exist "%NEW%" goto launch
+if exist "%OLD%" del /f /q "%OLD%" >nul 2>&1
+set /a N=0
+:moveold
+move /y "%EXE%" "%OLD%" >nul 2>&1
+if not errorlevel 1 goto movenew
+set /a N+=1
+if %N% geq 30 goto movefail
+ping -n 2 127.0.0.1 >nul
+goto moveold
+
+:movefail
+echo [%date% %time%] could not move the current exe aside, update not applied >> "%LOG%"
+goto launch
+
+:movenew
+move /y "%NEW%" "%EXE%" >nul 2>&1
+if errorlevel 1 (
+  echo [%date% %time%] could not move the new exe into place, restoring old >> "%LOG%"
+  move /y "%OLD%" "%EXE%" >nul 2>&1
+) else (
+  echo [%date% %time%] swapped in new exe >> "%LOG%"
 )
 
-rem extra settle so the exe's file handles are fully released
-ping -n 2 127.0.0.1 >nul
-
-if exist "%OLD%" del /f /q "%OLD%"
-if exist "%EXE%" move /y "%EXE%" "%OLD%" >nul
-move /y "%NEW%" "%EXE%" >nul
-
-start "" /b "%EXE%"
+:launch
+rem fresh one-file extraction: do not reuse the temp folder of the process that just exited
+set "PYINSTALLER_RESET_ENVIRONMENT=1"
+set "_MEIPASS2="
+cd /d "{exe_dir}"
+start "" "%EXE%"
+echo [%date% %time%] launched >> "%LOG%"
 del /f /q "%~f0" >nul 2>&1
 """
-# Waits for the app PID to exit, swaps the binary, relaunches, self-deletes.
 _HELPER_SH = r"""#!/bin/sh
 PID={pid}
+PARENT={ppid}
 EXE='{exe}'
 NEW='{new}'
 OLD='{old}'
+LOG=/tmp/event-printer-update.log
+echo "$(date) helper start pid=$PID parent=$PARENT new=$NEW" >> "$LOG"
 
 # Wait until the app process is gone.
 while kill -0 "$PID" 2>/dev/null; do
   sleep 1
 done
+# Then its PyInstaller launcher, but only if the parent really is our binary.
+if [ "$(ps -p "$PARENT" -o comm= 2>/dev/null | xargs basename 2>/dev/null)" = "$(basename "$EXE")" ]; then
+  n=0
+  while kill -0 "$PARENT" 2>/dev/null && [ "$n" -lt 60 ]; do
+    sleep 1
+    n=$((n+1))
+  done
+fi
 sleep 1  # let file handles fully release
 
-chmod +x "$NEW" 2>/dev/null
-# Clear macOS quarantine so Gatekeeper doesn't block the relaunch.
-xattr -d com.apple.quarantine "$NEW" 2>/dev/null
+if [ -n "$NEW" ] && [ -e "$NEW" ]; then
+  chmod +x "$NEW" 2>/dev/null
+  # Clear macOS quarantine so Gatekeeper doesn't block the relaunch.
+  xattr -d com.apple.quarantine "$NEW" 2>/dev/null
+  rm -f "$OLD"
+  [ -e "$EXE" ] && mv "$EXE" "$OLD"
+  if mv "$NEW" "$EXE"; then
+    echo "$(date) swapped in new binary" >> "$LOG"
+  else
+    echo "$(date) swap failed, restoring old binary" >> "$LOG"
+    [ -e "$OLD" ] && mv "$OLD" "$EXE"
+  fi
+fi
 
-rm -f "$OLD"
-[ -e "$EXE" ] && mv "$EXE" "$OLD"
-mv "$NEW" "$EXE"
-
-"$EXE" &
+# Fresh one-file extraction: do not reuse the temp folder of the process that just exited.
+export PYINSTALLER_RESET_ENVIRONMENT=1
+unset _MEIPASS2
+cd "$(dirname "$EXE")"
+nohup "$EXE" >/dev/null 2>&1 &
+echo "$(date) launched" >> "$LOG"
 rm -f "$0"
 """

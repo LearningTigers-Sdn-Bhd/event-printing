@@ -1422,6 +1422,7 @@
       $("cfg-url").value = j.backend_url || "";
       $("cfg-slug").value = j.event_slug || "";
       $("cfg-show-scanner").checked = j.show_scanner !== false;
+      $("cfg-direct-thermal").checked = !!j.direct_thermal;
       $("cfg-key").value = "";
       const stateEl = $("cfg-key-state");
       stateEl.textContent = j.api_key_set ? "set (" + j.api_key_masked + ")" : "not set";
@@ -1452,6 +1453,26 @@
       btn.disabled = false;
       input.disabled = false;
       input.placeholder = "Ready to scan…";
+    }
+  }
+
+  // Switches save the moment they are flipped; no need to press Save.
+  async function saveToggle(key, el, label) {
+    const want = el.checked;
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: want }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.status);
+      toast(label + (want ? " on" : " off"));
+      updateScanState(j);
+    } catch (e) {
+      el.checked = !want;
+      log(key + " save failed: " + e, "err");
+      toast("Couldn't save the setting", "err");
     }
   }
 

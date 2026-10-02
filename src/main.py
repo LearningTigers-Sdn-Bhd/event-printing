@@ -77,13 +77,20 @@ def server_status():
 
 @app.post("/server/restart")
 def server_restart():
-    """Re-execs the current process. Window stays open (pywebview keeps URL)."""
+    """Restarts the app. The installed (PyInstaller) build hands off to a helper
+    script that relaunches it cleanly; os.execv can't, see updater.restart()."""
     def _do_restart():
         time.sleep(0.4)  # let the HTTP response flush first
         try:
+            if updater.is_frozen():
+                updater.restart()
+                os._exit(0)
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception:
-            os._exit(0)
+            # Installed build: if the helper couldn't start, stay open rather
+            # than quitting with nothing to relaunch us.
+            if not updater.is_frozen():
+                os._exit(0)
     threading.Thread(target=_do_restart, daemon=True).start()
     return {"ok": True, "action": "restart"}
 
@@ -359,6 +366,7 @@ class ConfigPayload(BaseModel):
     event_slug: str | None = None
     api_key: str | None = None
     show_scanner: bool | None = None
+    direct_thermal: bool | None = None
     badge_types: list | None = None
     layout: dict | None = None
     layout_presets: dict | None = None

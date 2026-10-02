@@ -170,7 +170,24 @@
           <label>API key <span id="cfg-key-state" style="float:right;color:var(--muted);font-weight:400;"></span>
             <input id="cfg-key" type="password" placeholder="(leave blank to keep existing)" autocomplete="off" />
           </label>
-          <label><input id="cfg-show-scanner" type="checkbox" checked /> Show Scan &amp; check in</label>
+          <div class="switch-group">
+            <label class="switch-row">
+              <span class="switch-text">
+                <strong>Scan &amp; check in</strong>
+                <span class="hint">Show the scanner box on the main screen. Printing still works when it is hidden.</span>
+              </span>
+              <input id="cfg-show-scanner" class="switch" type="checkbox" role="switch" checked
+                     onchange="saveToggle('show_scanner', this, 'Scan &amp; check in')" />
+            </label>
+            <label class="switch-row">
+              <span class="switch-text">
+                <strong>Direct thermal tags</strong>
+                <span class="hint">Turn on if names print broken or with missing dots on rough or thick tags. Prints bolder.</span>
+              </span>
+              <input id="cfg-direct-thermal" class="switch" type="checkbox" role="switch"
+                     onchange="saveToggle('direct_thermal', this, 'Direct thermal tags')" />
+            </label>
+          </div>
           <div class="actions">
             <button type="submit">Save</button>
             <button type="button" class="ghost" onclick="loadConfig()">Reload</button>

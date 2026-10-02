@@ -83,6 +83,15 @@ def _rasterize_pdf_for_zebra(pdf_path: str) -> str:
     return out_path
 
 
+def _thicken(img):
+    """
+    Grow dark strokes by 1px on every side (3x3 min filter on greyscale).
+    Direct-thermal on rough stock drops dots; fatter strokes survive that.
+    """
+    from PIL import ImageFilter
+    return img.convert("L").filter(ImageFilter.MinFilter(3)).convert("RGB")
+
+
 def _create_printer_dc(printer_name: str, hprinter):
     """
     Create the printer DC, forcing paper size from the saved layout config
@@ -156,18 +165,35 @@ def _print_windows(file_path: str, printer_name: str) -> Dict[str, Any]:
             # Start print job
             hdc.StartDoc(os.path.basename(abs_path))
             
+            # Direct-thermal switch (saved from the UI). Any config problem
+            # falls back to off so it can never block printing.
+            try:
+                import config_store
+                direct_thermal = bool(config_store.load().get("direct_thermal"))
+            except Exception:
+                direct_thermal = False
+
             # Process each page
             for page_num in range(num_pages):
                 page = pdf_document[page_num]
                 
-                # Render page to high-res image (200 DPI)
-                zoom = 200 / 72
+                # Render page to high-res image (200 DPI). Direct-thermal mode
+                # renders at the driver's real DPI instead, so the resize
+                # below is ~1:1 and strokes don't thin out.
+                dpi = 200
+                if direct_thermal:
+                    dpi = hdc.GetDeviceCaps(win32con.LOGPIXELSX)
+                    if not 100 <= dpi <= 1200:
+                        dpi = 203
+                zoom = dpi / 72
                 mat = fitz.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat, alpha=False)
                 
                 # Convert to PIL Image
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
+                if direct_thermal:
+                    img = _thicken(img)
+
                 # Rotate 180 degrees
                 img = img.rotate(180, expand=True)
                 
