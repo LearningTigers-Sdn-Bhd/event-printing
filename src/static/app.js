@@ -389,6 +389,7 @@
     syncManualFields();
     renderCustomFieldManager();
     syncSizingButton();
+    syncSaveUI();
   }
 
   function syncSizingButton() {
@@ -456,7 +457,7 @@
     sel.innerHTML = "";
     const blank = document.createElement("option");
     blank.value = "";
-    blank.textContent = "(unsaved layout)";
+    blank.textContent = "New layout (not saved yet)";
     sel.appendChild(blank);
     for (const name of Object.keys(layoutPresets)) {
       const opt = document.createElement("option");
@@ -466,14 +467,48 @@
     }
     sel.value = layoutPresets[activePreset] ? activePreset : "";
     $("preset-delete").disabled = !sel.value;
+    syncSaveUI();
+  }
+
+  // ---- Which layout does Save write to? ----
+  // The save button always names its target ("Update “VIP”") so editing a
+  // loaded layout can't silently overwrite it when the user meant to make a
+  // second one. Dirty = the editor differs from what the server last gave us.
+  let _savedLayoutJson = "";
+  function _layoutJson() { return JSON.stringify(buildLayoutState()); }
+  function layoutDirty() { return _layoutJson() !== _savedLayoutJson; }
+  function markLayoutSaved() { _savedLayoutJson = _layoutJson(); syncSaveUI(); }
+
+  function syncSaveUI() {
+    const btn = $("layout-save");
+    const note = $("save-target");
+    if (!btn || !note) return;
+    const name = layoutPresets[activePreset] ? activePreset : "";
+    const dirty = layoutDirty();
+    btn.textContent = name ? "Update “" + name + "”" : "Save layout";
+    let msg = "";
+    if (name && dirty) {
+      msg = "Unsaved changes. Update overwrites “" + name + "”. To keep it and make a second layout, use Save as new layout.";
+    } else if (dirty) {
+      msg = "Unsaved changes — printing uses the last saved layout.";
+    }
+    note.textContent = msg;
+    note.hidden = !msg;
+    note.classList.toggle("warn", !!(name && dirty));
   }
 
   // Loads the selected preset's layout as the working layout (persists the
   // selection immediately, same as pressing Save layout would).
   async function onPresetChange() {
     const name = $("layout-preset-select").value;
+    if (name && layoutDirty() && !confirm("Switch to “" + name + "”? Your unsaved layout changes will be lost.")) {
+      renderPresetSelect(); // put the dropdown back
+      return;
+    }
     activePreset = name;
     $("preset-delete").disabled = !name;
+    // Picking "New layout" only detaches from the saved one — the editor
+    // keeps what's on screen so it can be saved under a new name.
     const layout = name ? layoutPresets[name] : null;
     if (layout) renderLayoutEditor(layout);
     try {
@@ -485,10 +520,9 @@
       const j = await r.json();
       if (!r.ok) { toast("Couldn't switch layout", "err"); return; }
       layoutPresets = j.layout_presets || {};
-      renderLayoutEditor(j.layout);
+      if (layout) { renderLayoutEditor(j.layout); markLayoutSaved(); updatePreview(); }
       renderPresetSelect();
-      updatePreview();
-      toast(name ? "Loaded \"" + name + "\"" : "Switched to unsaved layout");
+      toast(name ? "Loaded \"" + name + "\"" : "New layout started — saved layouts are untouched");
     } catch (e) {
       log("preset load failed: " + e, "err");
       toast("Couldn't switch layout", "err");
@@ -496,10 +530,18 @@
   }
 
   async function savePresetAs() {
-    const name = (prompt("Name this layout:") || "").trim().slice(0, 40);
-    if (!name) return;
     const layout = buildLayoutState();
     if (!layout) { toast("Pick at least one field to print", "warn"); return; }
+    if (layoutElements.some((el) => customFieldDefs[el] && !customFieldDefs[el].label)) {
+      toast("Give your new custom field a name first", "warn"); return;
+    }
+    const name = (prompt("Name the new layout:") || "").trim().slice(0, 40);
+    if (!name) return;
+    if (layoutPresets[name]) {
+      if (!confirm("A layout named “" + name + "” already exists. Replace it?")) return;
+    } else if (Object.keys(layoutPresets).length >= 20) {
+      toast("You can keep up to 20 saved layouts — delete one first", "warn"); return;
+    }
     try {
       const r = await fetch("/config", {
         method: "PUT",
@@ -515,6 +557,7 @@
       layoutPresets = j.layout_presets || {};
       activePreset = j.active_preset || name;
       renderPresetSelect();
+      markLayoutSaved();
       toast("Saved \"" + name + "\"");
     } catch (e) {
       log("preset save failed: " + e, "err");
@@ -1065,10 +1108,11 @@
       const j = await r.json();
       if (!r.ok) { log("layout save failed: " + (j.detail || r.status), "err"); toast("Couldn't save the layout", "err"); return; }
       log("layout saved", "ok");
-      toast("Layout saved");
+      toast(activePreset ? "Updated “" + activePreset + "”" : "Layout saved");
       layoutPresets = j.layout_presets || {};
       renderPresetSelect();
       renderLayoutEditor(j.layout);
+      markLayoutSaved();
       updatePreview();
     } catch (e) {
       log("layout save failed: " + e, "err");
@@ -1082,6 +1126,7 @@
     if (_previewTimer) clearTimeout(_previewTimer);
     _previewTimer = setTimeout(updatePreview, delay == null ? 450 : delay);
     setPreviewChip("updating…", "busy");
+    syncSaveUI();
   }
 
   function setPreviewChip(text, kind) {
@@ -1434,6 +1479,7 @@
       activePreset = j.active_preset || "";
       renderLayoutEditor(j.layout);
       renderPresetSelect();
+      markLayoutSaved();
     } catch (e) {
       log("config load failed: " + e, "err");
     }
@@ -1445,6 +1491,7 @@
     const input = $("scan-input");
     $("banner").classList.toggle("show", !ready);
     _syncScanSection(ready, cfg.show_scanner !== false);
+    syncNoPrint(cfg, !!ready);
     if (!ready) {
       btn.disabled = true;
       input.disabled = true;
@@ -1525,16 +1572,134 @@
     }
   }
 
+  // ================= Check in without a badge (ticket-type skip list) =================
+  // Only usable once the event is connected: the choices are the event's own
+  // ticket types, fetched from EventzFlow. Ticking a row saves straight away.
+  let noPrintTypes = [];      // saved skip list
+  let eventTicketTypes = [];  // names fetched from EventzFlow
+  let _typesFetchedFor = null;
+
+  function syncNoPrint(cfg, ready) {
+    noPrintTypes = cfg.no_print_ticket_types || [];
+    $("noprint-locked").hidden = ready;
+    $("noprint-body").hidden = !ready;
+    if (!ready) { _typesFetchedFor = null; eventTicketTypes = []; return; }
+    renderNoPrint();
+    const key = cfg.backend_url + "|" + cfg.event_slug;
+    if (key !== _typesFetchedFor) { _typesFetchedFor = key; loadTicketTypes(); }
+  }
+
+  async function loadTicketTypes() {
+    const note = $("noprint-note");
+    try {
+      const r = await fetch("/ticket-types");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.status);
+      eventTicketTypes = j.types || [];
+      note.hidden = true;
+    } catch (e) {
+      eventTicketTypes = [];
+      note.textContent = "Couldn't load ticket types from EventzFlow. You can still add one by name below.";
+      note.hidden = false;
+      log("ticket types load failed: " + e, "err");
+    }
+    renderNoPrint();
+  }
+
+  const _sameType = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+  function renderNoPrint() {
+    const list = $("noprint-list");
+    list.innerHTML = "";
+    // Event types first, then any saved name the event didn't list (hidden types).
+    const names = eventTicketTypes.concat(noPrintTypes.filter((t) => !eventTicketTypes.some((e) => _sameType(e, t))));
+    for (const name of names) {
+      const on = noPrintTypes.some((t) => _sameType(t, name));
+      const row = document.createElement("label");
+      row.className = "layout-el";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = on;
+      cb.onchange = () => saveNoPrint(cb.checked
+        ? noPrintTypes.concat(name)
+        : noPrintTypes.filter((t) => !_sameType(t, name)));
+      const text = document.createElement("span");
+      text.className = "el-label";
+      text.textContent = name;
+      if (on) {
+        const hint = document.createElement("span");
+        hint.className = "key-hint";
+        hint.textContent = "no badge";
+        text.appendChild(hint);
+      }
+      row.append(cb, text);
+      list.appendChild(row);
+    }
+    if (!names.length) {
+      const empty = document.createElement("div");
+      empty.className = "feed-empty";
+      empty.textContent = "No ticket types yet — add one by name below.";
+      list.appendChild(empty);
+    }
+  }
+
+  async function saveNoPrint(next) {
+    try {
+      const r = await fetch("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ no_print_ticket_types: next }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.status);
+      noPrintTypes = j.no_print_ticket_types || [];
+      toast(noPrintTypes.length
+        ? "No badge for: " + noPrintTypes.join(", ")
+        : "Every ticket type prints a badge");
+    } catch (e) {
+      log("skip list save failed: " + e, "err");
+      toast("Couldn't save the setting", "err");
+    }
+    renderNoPrint();
+  }
+
+  function addNoPrintType(ev) {
+    ev.preventDefault();
+    const input = $("noprint-add");
+    const name = input.value.trim().slice(0, 40);
+    if (!name) return;
+    input.value = "";
+    if (noPrintTypes.some((t) => _sameType(t, name))) { toast("“" + name + "” is already ticked", "warn"); return; }
+    saveNoPrint(noPrintTypes.concat(name));
+  }
+
   // ================= Scan =================
   let _scanInFlight = false;
   let _scanQueue = [];
   const _recentScans = new Map();
   const DEDUP_MS = 3000;
   const FEED_MAX = 40;
+  const _tally = { in: 0, repeat: 0 };
+
+  // What each /scan status means on screen. `action` is the follow-up the
+  // operator most likely needs; `primary` makes it the solid button.
+  const SCAN_STATES = {
+    printed:      { kind: "ok",   mark: "✓", word: "Checked in — badge printing",      action: "Reprint badge", short: "Reprint" },
+    no_badge:     { kind: "skip", mark: "✓", word: "Checked in — no badge",            action: "Print badge anyway", short: "Print" },
+    print_failed: { kind: "err",  mark: "!", word: "Checked in — badge didn't print", action: "Retry print", short: "Retry", primary: true },
+    already:      { kind: "warn", mark: "↻", word: "Already checked in",               action: "Reprint badge", short: "Reprint", primary: true },
+  };
 
   function focusScan() {
     const el = $("scan-input");
     if (el && !el.disabled) el.focus();
+  }
+
+  function _renderTally() {
+    const parts = [];
+    if (_tally.in) parts.push(_tally.in + " checked in");
+    if (_tally.repeat) parts.push(_tally.repeat + " repeat" + (_tally.repeat === 1 ? "" : "s"));
+    $("scan-tally").textContent = parts.join(" · ");
   }
 
   function clearHistory() {
@@ -1543,7 +1708,10 @@
     el.appendChild(_feedEmpty());
     _recentScans.clear();
     _scanQueue = [];
-    $("last-scan").classList.remove("show");
+    _tally.in = 0; _tally.repeat = 0;
+    _renderTally();
+    $("last-scan").className = "";
+    focusScan();
   }
 
   function _feedEmpty() {
@@ -1568,7 +1736,7 @@
     _trimFeed();
   }
 
-  // ---- Feed row renderer (replaces result-box cards) ----
+  // ---- Feed row renderer ----
   function _feedRow(kind) {
     const row = document.createElement("div");
     row.className = "feed-row " + kind;
@@ -1608,45 +1776,62 @@
     return el;
   }
 
-  // Builds the inline Reprint button — shown only on already-checked-in rows.
-  function _reprintButton(ticketId) {
+  // Inline print button — every row with a real ticket gets one.
+  function _reprintButton(ticketId, label, title) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = "Reprint";
+    btn.textContent = label;
     btn.className = "r-reprint";
-    btn.title = "Print this badge again";
+    btn.title = title;
     btn.onclick = () => reprintTicket(ticketId, btn);
     return btn;
   }
 
-  function renderScanSuccess(j) {
-    const t = j.ticket || {};
-    const row = _feedRow("ok");
-    _rowName(row, t.name || t.ticket_id || "Printed");
-    _rowTs(row);
-    _rowMeta(row, "✓ Printed & checked in", [t.ticket_id, t.ticket_type, t.company]);
-    prependHistory(row);
-    _updateLastScan("ok", "Printed & checked in", t.name, [t.ticket_id, t.ticket_type], null);
+  // "10:42:07" today, full date otherwise; "" when the backend sent nothing usable.
+  function _fmtWhen(iso) {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return "";
+    return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString() : d.toLocaleString();
   }
 
-  function renderAlreadyScanned(j) {
+  function _scanDetail(j) {
     const t = j.ticket || {};
-    const row = _feedRow("warn");
-    _rowName(row, t.name || t.ticket_id || "Already checked in");
+    if (j.status === "already") {
+      const when = _fmtWhen(j.checked_in_at);
+      if (!when) return j.check_in_message || "";
+      return "First scanned " + when
+        + (j.checked_in_by ? " by " + j.checked_in_by : "")
+        + (j.checked_in_location ? " at " + j.checked_in_location : "");
+    }
+    if (j.status === "no_badge") return "“" + t.ticket_type + "” tickets check in without a badge.";
+    if (j.status === "print_failed") return j.print_error || "The printer didn't accept the badge.";
+    return "";
+  }
+
+  function renderScanResult(j) {
+    const status = SCAN_STATES[j.status] ? j.status : (j.already_scanned ? "already" : "printed");
+    const st = SCAN_STATES[status];
+    const t = j.ticket || {};
+    const row = _feedRow(st.kind);
+    _rowName(row, t.name || t.ticket_id);
     _rowTs(row);
-    const meta = _rowMeta(row, "↻ Already checked in", [t.ticket_id, t.ticket_type, t.company]);
-    if (t.ticket_id) meta.appendChild(_reprintButton(t.ticket_id));
+    const meta = _rowMeta(row, st.mark + " " + st.word, [t.ticket_type, t.company, t.ticket_id]);
+    if (t.ticket_id) meta.appendChild(_reprintButton(t.ticket_id, st.short, st.action));
     prependHistory(row);
-    _updateLastScan("warn", "Already checked in", t.name, [t.ticket_id, t.ticket_type], null);
+    if (status === "already") _tally.repeat++; else _tally.in++;
+    _renderTally();
+    _updateLastScan(st, t.name || t.ticket_id, [t.ticket_type, t.company, t.ticket_id],
+      _scanDetail({ ...j, status }), t.ticket_id);
+    return status;
   }
 
   function renderScanError(publicId, msg) {
     const row = _feedRow("err");
     _rowName(row, publicId);
     _rowTs(row);
-    _rowMeta(row, "× Couldn't scan", [msg]);
+    _rowMeta(row, "× Not checked in", [msg]);
     prependHistory(row);
-    _updateLastScan("err", "Couldn't scan", publicId, null, msg);
+    _updateLastScan({ kind: "err", mark: "×", word: "Not checked in" }, publicId, [], msg, null);
     _showScanNote(msg);
   }
 
@@ -1662,31 +1847,32 @@
     return row;
   }
 
-  // ---- LAST SCAN block ----
-  let _lastScanTicketId = null; // ticket_id of the most recent successful/duplicate scan
+  // ---- Result card for the most recent scan ----
+  let _lastScanTicketId = null;
 
-  function _updateLastScan(kind, stateWord, name, metaParts, reason) {
-    const block = $("last-scan");
-    block.classList.add("show");
-    // Remember the ticket behind this scan so the Reprint button can target
-    // it. Only already-checked-in (warn) scans offer reprint.
-    _lastScanTicketId = (kind === "warn") ? ((metaParts || [])[0] || null) : null;
-    const reprintBtn = $("last-reprint");
-    if (reprintBtn) reprintBtn.style.display = _lastScanTicketId ? "" : "none";
-    const state = $("last-state");
-    state.className = "last-state " + kind;
-    const word = (kind === "ok" ? "✓ " : kind === "warn" ? "↻ " : kind === "err" ? "× " : "") + stateWord;
-    $("last-state-word").textContent = word;
+  function _updateLastScan(st, name, metaParts, detail, ticketId) {
+    $("last-scan").className = "show " + st.kind;
+    _lastScanTicketId = ticketId || null;
+    const btn = $("last-reprint");
+    btn.hidden = !_lastScanTicketId;
+    btn.disabled = false;
+    btn.textContent = st.action || "Reprint badge";
+    delete btn.dataset.label;
+    btn.classList.toggle("ghost", !st.primary);
+    $("last-state").className = "last-state " + st.kind;
+    $("last-state-word").textContent = st.mark + " " + st.word;
+    $("last-time").textContent = new Date().toLocaleTimeString();
     const nameEl = $("last-name");
     nameEl.textContent = name || "—";
     nameEl.title = name || "";
+    const meta = (metaParts || []).filter(Boolean).join(" · ");
     const metaEl = $("last-meta");
-    const meta = (metaParts || []).filter(Boolean).join(" · ") + (metaParts && metaParts.length ? " · " : "") + new Date().toLocaleTimeString();
     metaEl.textContent = meta;
     metaEl.title = meta;
+    metaEl.style.display = meta ? "" : "none";
     const reasonEl = $("last-reason");
-    reasonEl.textContent = reason || "";
-    reasonEl.style.display = reason ? "" : "none";
+    reasonEl.textContent = detail || "";
+    reasonEl.style.display = detail ? "" : "none";
   }
 
   function _showScanNote(msg) {
@@ -1714,17 +1900,24 @@
       if (!r.ok) {
         renderScanError(publicId, j.detail || ("Error " + r.status));
         log("scan failed: " + (j.detail || r.status), "err");
-        toast("Scan didn't work — try again", "err");
-      } else if (j.already_scanned) {
-        renderAlreadyScanned(j);
+        toast("Not checked in — see the reason on screen", "err");
+        return;
+      }
+      const status = renderScanResult(j);
+      const who = j.ticket?.name || j.ticket?.ticket_id || publicId;
+      _recentScans.set(publicId, Date.now());
+      if (status === "already") {
         log("already scanned: " + publicId, "warn");
         toast("This guest already checked in", "warn");
-        _recentScans.set(publicId, Date.now());
+      } else if (status === "no_badge") {
+        log("checked in, no badge (" + (j.ticket?.ticket_type || "?") + "): " + who, "ok");
+        toast("Checked in — no badge for this ticket type");
+      } else if (status === "print_failed") {
+        log("checked in but print failed: " + who + " — " + (j.print_error || ""), "err");
+        toast("Checked in, but the badge didn't print", "err");
       } else {
-        renderScanSuccess(j);
-        log("printed + checked in: " + (j.ticket?.ticket_id || publicId), "ok");
+        log("printed + checked in: " + who, "ok");
         toast("Checked in — badge is printing");
-        _recentScans.set(publicId, Date.now());
       }
     } catch (e) {
       if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
@@ -1781,35 +1974,37 @@
     await _drainQueue();
   }
 
-  // Reprint from the "Last scan" panel — targets the most recent scanned ticket.
   function reprintLastScan() {
     if (_lastScanTicketId) reprintTicket(_lastScanTicketId, $("last-reprint"));
   }
 
+  // Prints a badge without touching check-in. The button reports the outcome
+  // then returns to its label so the same badge can be printed again, and
+  // focus goes back to the scan box so the next scan isn't typed into nowhere.
   async function reprintTicket(publicId, btn) {
-    if (!publicId) return;
-    const label = btn.textContent;
+    if (!publicId || btn.disabled) return;
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
+    const restore = () => {
+      if (btn.dataset.label !== label) return; // card moved on to another scan
+      btn.disabled = false;
+      btn.textContent = label;
+    };
     btn.disabled = true;
-    btn.textContent = "Reprinting…";
-    log("reprinting " + publicId + "…");
+    btn.textContent = "Printing…";
+    log("printing " + publicId + "…");
     try {
       const r = await fetch("/scan/" + encodeURIComponent(publicId) + "/reprint", { method: "POST" });
       const j = await r.json();
-      if (!r.ok) {
-        const msg = j.detail || ("Error " + r.status);
-        log("reprint failed: " + msg, "err");
-        toast("Reprint failed — try again", "err");
-        btn.disabled = false;
-        btn.textContent = "Reprint";
-      } else {
-        log("reprinted: " + publicId, "ok");
-        toast("Badge reprinted");
-        btn.textContent = "Reprinted";
-      }
+      if (!r.ok) throw new Error(j.detail || ("Error " + r.status));
+      log("printed: " + publicId, "ok");
+      toast("Badge sent to the printer");
+      btn.textContent = "✓ Sent";
+      setTimeout(restore, 2000);
     } catch (e) {
-      log("reprint error: " + e, "err");
-      toast("Reprint failed — try again", "err");
-      btn.disabled = false;
-      btn.textContent = "Reprint";
+      log("print failed: " + (e.message || e), "err");
+      toast("Badge didn't print — check the printer", "err");
+      restore();
     }
+    focusScan();
   }

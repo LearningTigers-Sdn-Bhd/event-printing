@@ -136,6 +136,17 @@ def _sanitize_badge_types(value: Any) -> Optional[list]:
     return result or None
 
 
+def _sanitize_no_print_types(value: Any) -> list:
+    """Ticket types that check in without printing. Unlike badge types, empty is valid."""
+    return _sanitize_badge_types(value) or []
+
+
+def is_no_print_type(ticket_type: Any, cfg: Dict[str, Any]) -> bool:
+    """Case-insensitive match of a scanned ticket's type against the skip list."""
+    wanted = str(ticket_type or "").strip().lower()
+    return bool(wanted) and wanted in (t.lower() for t in cfg.get("no_print_ticket_types") or [])
+
+
 def new_custom_field_id() -> str:
     """Generates a unique layout element id like custom_a1b2c3."""
     return f"{CUSTOM_FIELD_ID_PREFIX}{uuid.uuid4().hex[:6]}"
@@ -256,6 +267,7 @@ def _defaults() -> Dict[str, Any]:
         "active_preset": None,
         "show_scanner": True,
         "direct_thermal": False,
+        "no_print_ticket_types": [],
     }
 
 
@@ -276,6 +288,7 @@ def load() -> Dict[str, Any]:
             badge_types = _sanitize_badge_types(stored.get("badge_types"))
             if badge_types:
                 data["badge_types"] = badge_types
+            data["no_print_ticket_types"] = _sanitize_no_print_types(stored.get("no_print_ticket_types"))
             layout = _sanitize_layout(stored.get("layout"))
             if layout:
                 data["layout"] = layout
@@ -301,6 +314,8 @@ def save(values: Dict[str, Any]) -> Dict[str, Any]:
         badge_types = _sanitize_badge_types(values["badge_types"])
         if badge_types:
             current["badge_types"] = badge_types
+    if "no_print_ticket_types" in values:
+        current["no_print_ticket_types"] = _sanitize_no_print_types(values["no_print_ticket_types"])
     if "layout" in values:
         layout = _sanitize_layout(values["layout"])
         if layout:
@@ -357,4 +372,5 @@ def public_view(values: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "active_preset": values.get("active_preset"),
         "show_scanner": values.get("show_scanner", True),
         "direct_thermal": values.get("direct_thermal", False),
+        "no_print_ticket_types": values.get("no_print_ticket_types") or [],
     }

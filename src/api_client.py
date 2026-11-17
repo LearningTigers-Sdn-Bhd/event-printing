@@ -50,6 +50,35 @@ class BackendClient:
             raise BackendError("Lookup response missing data field.")
         return data
 
+    def fetch_ticket_types(self, event_slug: str) -> list:
+        """GET /v1/public/events/{event_slug}/ticket_types -> list of type names.
+
+        Only the event's publicly listed types come back; hidden ones (staff,
+        comps) have to be typed in by hand on the dashboard.
+        """
+        self._check_base()
+        if not event_slug:
+            raise BackendError("Event slug is not configured.")
+        url = f"{self.base_url}/v1/public/events/{quote(event_slug, safe='')}/ticket_types"
+        try:
+            r = httpx.get(url, timeout=self.timeout)
+        except httpx.HTTPError as e:
+            raise BackendError(f"Network error contacting backend: {e}") from e
+        if r.status_code == 404:
+            raise BackendError("Event not found. Check the event name (slug).")
+        if r.status_code >= 400:
+            raise BackendError(f"Ticket type lookup failed ({r.status_code}): {_safe_excerpt(r.text)}")
+        try:
+            data = r.json().get("data")
+        except (ValueError, AttributeError) as e:
+            raise BackendError("Ticket type lookup returned an unexpected response.") from e
+        names = []
+        for item in data if isinstance(data, list) else []:
+            name = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+            if name and name not in names:
+                names.append(name)
+        return names
+
     def check_in(self, public_id: str) -> Dict[str, Any]:
         """PATCH /v1/scan/{public_id}/check_in (requires api key)."""
         self._check_base()
@@ -65,10 +94,17 @@ class BackendClient:
         if r.status_code == 422:
             try:
                 body = r.json()
-                msg = body.get("error") or body.get("message") or "Ticket already checked in."
             except ValueError:
-                msg = "Ticket already checked in."
-            raise BackendAlreadyCheckedIn(msg)
+                body = None
+            if not isinstance(body, dict):
+                raise BackendAlreadyCheckedIn("Ticket already checked in.")
+            msg = body.get("error") or body.get("message") or "Ticket already checked in."
+            # 422 is also how the backend refuses unpaid tickets. Only the
+            # already-scanned refusal carries checked_in_at / blocked_by —
+            # anything else must not be offered a reprint.
+            if "checked_in_at" in body or "blocked_by" in body or "already" in str(msg).lower():
+                raise BackendAlreadyCheckedIn(msg, body)
+            raise BackendError(msg)
         if r.status_code in (401, 403):
             raise BackendError("Not authorized. Check your API key permissions.")
         if r.status_code == 404:
@@ -87,7 +123,15 @@ class BackendError(RuntimeError):
 
 
 class BackendAlreadyCheckedIn(BackendError):
-    pass
+    """Carries who/when/where of the earlier scan when the backend reports it."""
+
+    def __init__(self, message: str, body: Dict[str, Any] | None = None):
+        super().__init__(message)
+        blocked = (body or {}).get("blocked_by")
+        blocked = blocked if isinstance(blocked, dict) else {}
+        self.checked_in_at = (body or {}).get("checked_in_at") or blocked.get("scanned_at")
+        self.checked_in_by = blocked.get("scanned_by_name")
+        self.location = blocked.get("location_name")
 
 
 def _safe_excerpt(text: str, limit: int = 200) -> str:

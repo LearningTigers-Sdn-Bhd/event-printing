@@ -48,6 +48,36 @@
   <main>
     <div class="col sidebar">
 
+      <!-- SCAN & CHECK IN — first thing on a connected station -->
+      <details class="zone" id="scan-section">
+        <summary><span class="chev" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></span>Scan &amp; check in</summary>
+        <div class="details-body">
+          <div class="banner" id="banner">
+            <span class="msg">This station isn't connected to an event</span>
+            <button type="button" class="ghost icon" onclick="openDrawer('event')">Connect</button>
+          </div>
+          <form id="scan-form" onsubmit="scanTicket(event)">
+            <label class="sr-only" for="scan-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Ticket code</label>
+            <div class="scan-input-wrap">
+              <span class="scan-glyph" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></svg>
+              </span>
+              <input id="scan-input" placeholder="Ready to scan…" autocomplete="off" />
+            </div>
+            <button type="submit" id="scan-btn">Check in &amp; print</button>
+            <div class="scan-note" id="scan-note" role="alert"></div>
+          </form>
+
+          <div id="last-scan" aria-live="polite">
+            <div class="last-state" id="last-state"><span id="last-state-word"></span><span class="last-time" id="last-time"></span></div>
+            <div class="last-name" id="last-name"></div>
+            <div class="last-meta" id="last-meta"></div>
+            <div class="last-reason" id="last-reason"></div>
+            <button type="button" class="icon" id="last-reprint" hidden onclick="reprintLastScan()">Reprint badge</button>
+          </div>
+        </div>
+      </details>
+
       <!-- MANUAL ENTRY — primary, open by default -->
       <details class="zone" id="manual-entry" open>
         <summary><span class="chev" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></span>Manual entry</summary>
@@ -85,47 +115,16 @@
             </div>
           </form>
           <p class="layout-note" id="manual-layout-note" hidden></p>
-
-          <details class="sub-zone" id="scan-section">
-            <summary><span class="chev" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg></span>Scan &amp; check in</summary>
-            <div class="details-body">
-              <div class="banner" id="banner">
-                <span class="msg">This station isn't connected to an event</span>
-                <button type="button" class="ghost icon" onclick="openDrawer('event')">Connect</button>
-              </div>
-              <form id="scan-form" onsubmit="scanTicket(event)">
-                <label class="sr-only" for="scan-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Ticket code</label>
-                <div class="scan-input-wrap">
-                  <span class="scan-glyph" aria-hidden="true">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></svg>
-                  </span>
-                  <input id="scan-input" placeholder="Ready to scan…" autocomplete="off" />
-                </div>
-                <button type="submit" id="scan-btn">Print &amp; check in</button>
-                <div class="scan-sub">
-                  <button type="button" class="ghost icon" onclick="focusScan()">Focus</button>
-                  <span class="spacer"></span>
-                  <button type="button" class="ghost icon" onclick="clearHistory()" title="Clear history">Clear</button>
-                </div>
-                <div class="scan-note" id="scan-note" role="alert"></div>
-              </form>
-
-              <div id="last-scan" aria-live="polite">
-                <h3>Last scan</h3>
-                <div class="last-state" id="last-state"><span class="dot"></span><span id="last-state-word"></span></div>
-                <div class="last-name" id="last-name"></div>
-                <div class="last-meta" id="last-meta"></div>
-                <div class="last-reason" id="last-reason"></div>
-                <button type="button" class="ghost icon" id="last-reprint" style="display:none" onclick="reprintLastScan()">Reprint badge</button>
-              </div>
-            </div>
-          </details>
         </div>
       </details>
 
       <!-- RECENT -->
       <section class="zone" aria-label="Recent">
-        <h2>Recent</h2>
+        <div class="zone-head">
+          <h2>Recent</h2>
+          <span class="tally" id="scan-tally"></span>
+          <button type="button" class="ghost icon" onclick="clearHistory()" title="Clear this list">Clear</button>
+        </div>
         <div id="scan-history" class="scan-history"><div class="feed-empty" id="feed-empty">No scans yet — the first ticket will appear here</div></div>
       </section>
 
@@ -196,6 +195,20 @@
         </form>
       </section>
 
+      <section class="zone" id="drawer-noprint">
+        <h2>Check in without a badge</h2>
+        <p class="disclaimer">Tick the ticket types that should be checked in when scanned but <strong>not</strong> print a badge. Staff can still print one from the scan result if a guest needs it.</p>
+        <p class="layout-note" id="noprint-locked">Connect your event with an API key first — the ticket types come from EventzFlow.</p>
+        <div id="noprint-body" hidden>
+          <div class="layout-list" id="noprint-list"></div>
+          <p class="layout-note" id="noprint-note" hidden></p>
+          <form class="inline-add" onsubmit="addNoPrintType(event)">
+            <input id="noprint-add" placeholder="Add a type by exact name" autocomplete="off" aria-label="Ticket type to add" />
+            <button type="submit" class="ghost">Add</button>
+          </form>
+        </div>
+      </section>
+
       <section class="zone">
         <h2>Badge types</h2>
         <p class="disclaimer">The list shown in the manual-entry "Badge type" dropdown. Add the types your event uses.</p>
@@ -212,10 +225,9 @@
         <div class="preset-row">
           <label>Saved layout
             <select id="layout-preset-select" onchange="onPresetChange()">
-              <option value="">(unsaved layout)</option>
+              <option value="">New layout (not saved yet)</option>
             </select>
           </label>
-          <button type="button" class="ghost" id="preset-save-as" onclick="savePresetAs()">Save as new</button>
           <button type="button" class="ghost danger-ghost" id="preset-delete" onclick="deletePreset()" disabled>Delete</button>
         </div>
         <form id="layout-form" onsubmit="saveLayout(event)">
@@ -256,8 +268,10 @@
           </div>
           <div class="layout-list" id="layout-list"></div>
           <div class="custom-fields-manager" id="custom-fields-manager"></div>
+          <p class="save-target" id="save-target" role="status" hidden></p>
           <div class="actions">
-            <button type="submit">Save layout</button>
+            <button type="submit" id="layout-save">Save layout</button>
+            <button type="button" class="ghost" id="preset-save-as" onclick="savePresetAs()">Save as new layout…</button>
             <button type="button" class="ghost" onclick="loadConfig()">Reload</button>
           </div>
         </form>

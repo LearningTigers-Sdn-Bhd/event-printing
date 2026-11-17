@@ -368,6 +368,7 @@ class ConfigPayload(BaseModel):
     show_scanner: bool | None = None
     direct_thermal: bool | None = None
     badge_types: list | None = None
+    no_print_ticket_types: list | None = None
     layout: dict | None = None
     layout_presets: dict | None = None
     active_preset: str | None = None
@@ -394,88 +395,94 @@ def delete_config():
     return config_store.public_view()
 
 
-@app.post("/scan/{public_id}")
-def scan_ticket(public_id: str):
-    """
-    Check-in first, then print. Flow:
-    1. Lookup ticket on backend
-    2. Mark as checked-in
-    3. Print badge
-    If already checked-in: return 200 with already_scanned=true, no print.
-    Operator can trigger reprint via /scan/{public_id}/reprint.
-    """
+def _backend(require_key: bool = True) -> tuple[dict, BackendClient]:
+    """Loads config and builds the EventzFlow client, or 400s if not connected."""
     cfg = config_store.load()
-    if not cfg.get("backend_url") or not cfg.get("event_slug") or not cfg.get("api_key"):
+    if not cfg.get("backend_url") or not cfg.get("event_slug") or (require_key and not cfg.get("api_key")):
         raise HTTPException(status_code=400, detail="Backend not configured. Set backend URL, event slug, and API key.")
+    return cfg, BackendClient(cfg["backend_url"], cfg.get("api_key", ""))
 
-    client = BackendClient(cfg["backend_url"], cfg.get("api_key", ""))
 
+def _lookup(cfg: dict, client: BackendClient, public_id: str) -> TicketPayload:
+    """Fetches a ticket from the backend and maps it to a printable payload."""
     try:
         ticket_data = client.fetch_ticket(cfg["event_slug"], public_id)
     except BackendError as e:
         raise HTTPException(status_code=502, detail=str(e))
-
     try:
         payload = _ticket_payload_from_backend(
             ticket_data,
-            custom_defs=(config_store.load().get("layout") or {}).get("custom_fields"),
+            custom_defs=(cfg.get("layout") or {}).get("custom_fields"),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Invalid ticket data from backend: {e}")
-
     if not payload.ticket_id:
         raise HTTPException(status_code=502, detail="Backend response missing public_id.")
+    return payload
+
+
+@app.get("/ticket-types")
+def ticket_types():
+    """The connected event's ticket type names, for the skip-printing picker.
+    Only offered once the station is fully connected (URL + slug + API key)."""
+    cfg, client = _backend()
+    try:
+        return {"ok": True, "types": client.fetch_ticket_types(cfg["event_slug"])}
+    except BackendError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/scan/{public_id}")
+def scan_ticket(public_id: str):
+    """
+    Look up, check in, then print. `status` tells the dashboard what happened:
+      printed       checked in and badge sent to the printer
+      no_badge      checked in; ticket type is on the skip-printing list
+      print_failed  checked in but the printer refused (operator can retry)
+      already       checked in earlier; nothing printed
+    The operator can always print via /scan/{public_id}/reprint.
+    """
+    cfg, client = _backend()
+    payload = _lookup(cfg, client, public_id)
+    result: dict = {"ok": True, "already_scanned": False, "ticket": payload.model_dump()}
 
     try:
-        check_in = client.check_in(payload.ticket_id)
+        result["check_in"] = client.check_in(payload.ticket_id)
     except BackendAlreadyCheckedIn as e:
         return {
-            "ok": True,
+            **result,
+            "status": "already",
             "already_scanned": True,
             "check_in_message": str(e),
-            "ticket": payload.model_dump(),
+            "checked_in_at": e.checked_in_at,
+            "checked_in_by": e.checked_in_by,
+            "checked_in_location": e.location,
         }
     except BackendError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    print_result = _do_print(payload, prefix="scan")
+    if config_store.is_no_print_type(payload.ticket_type, cfg):
+        return {**result, "status": "no_badge"}
 
-    return {
-        "ok": True,
-        "already_scanned": False,
-        "ticket": payload.model_dump(),
-        "check_in": check_in,
-        **print_result,
-    }
+    # The guest is checked in from here on, so a printer fault must not look
+    # like a failed scan — rescanning would only say "already checked in".
+    try:
+        return {**result, "status": "printed", **_do_print(payload, prefix="scan")}
+    except HTTPException as e:
+        return {**result, "status": "print_failed", "print_error": str(e.detail)}
+    except Exception as e:
+        return {**result, "status": "print_failed", "print_error": f"Could not create the badge: {e}"}
 
 
 @app.post("/scan/{public_id}/reprint")
 def reprint_ticket(public_id: str):
     """
-    Force reprint for an already-checked-in ticket.
-    Looks up ticket (no check-in call), prints badge.
+    Operator-requested print: looks up the ticket (no check-in call) and
+    prints it, even when its ticket type is on the skip-printing list.
     """
-    cfg = config_store.load()
-    if not cfg.get("backend_url") or not cfg.get("event_slug"):
-        raise HTTPException(status_code=400, detail="Backend not configured.")
-
-    client = BackendClient(cfg["backend_url"], cfg.get("api_key", ""))
-
-    try:
-        ticket_data = client.fetch_ticket(cfg["event_slug"], public_id)
-    except BackendError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    try:
-        payload = _ticket_payload_from_backend(
-            ticket_data,
-            custom_defs=(config_store.load().get("layout") or {}).get("custom_fields"),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Invalid ticket data from backend: {e}")
-
+    cfg, client = _backend(require_key=False)
+    payload = _lookup(cfg, client, public_id)
     print_result = _do_print(payload, prefix="reprint")
-
     return {
         "ok": True,
         "reprinted": True,

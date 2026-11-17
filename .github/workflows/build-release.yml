@@ -75,9 +75,29 @@ jobs:
             kill -0 $PID 2>/dev/null || { echo "process exited"; cat /tmp/ep-ci.log; exit 1; }
             sleep 1
           done
-          kill $PID 2>/dev/null || true
-          [ "$ok" = "1" ] || { echo "health check failed"; cat /tmp/ep-ci.log; exit 1; }
+          [ "$ok" = "1" ] || { kill $PID 2>/dev/null || true; echo "health check failed"; cat /tmp/ep-ci.log; exit 1; }
           echo "health OK"
+
+          # Restart must bring the app back as a NEW process. This is the same
+          # relaunch helper the self-updater uses, so it guards "update just
+          # closes the app" on both platforms.
+          app_pid() { curl -fs http://127.0.0.1:8399/server/status 2>/dev/null | sed -E 's/.*"pid":([0-9]+).*/\1/'; }
+          before=$(app_pid)
+          curl -fs -X POST http://127.0.0.1:8399/server/restart >/dev/null
+          back=0
+          for i in $(seq 1 120); do
+            now=$(app_pid || true)
+            if [ -n "$now" ] && [ "$now" != "$before" ]; then back=1; break; fi
+            sleep 1
+          done
+          curl -fs -X POST http://127.0.0.1:8399/server/quit >/dev/null 2>&1 || true
+          kill $PID 2>/dev/null || true
+          if [ "$back" != "1" ]; then
+            echo "app did not come back after restart (pid was $before)"
+            cat "${TEMP:-/tmp}/event-printer-update.log" 2>/dev/null || true
+            exit 1
+          fi
+          echo "restart OK ($before -> $now)"
 
       - name: Stage artifact with release asset name
         shell: bash
