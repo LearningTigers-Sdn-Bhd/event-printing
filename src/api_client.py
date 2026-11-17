@@ -79,6 +79,70 @@ class BackendClient:
                 names.append(name)
         return names
 
+    def search_attendees(self, event_slug: str, method: str, value: str) -> list:
+        """POST /v1/public/events/{slug}/check_in {method, value} -> matching guests.
+
+        The same no-login search the EventzFlow check-in page uses (paid
+        tickets, newest first, at most 10). Nothing is checked in here.
+        """
+        self._check_base()
+        if not event_slug:
+            raise BackendError("Event slug is not configured.")
+        url = f"{self.base_url}/v1/public/events/{quote(event_slug, safe='')}/check_in"
+        try:
+            r = httpx.post(url, json={"method": method, "value": value}, timeout=self.timeout)
+        except httpx.HTTPError as e:
+            raise BackendError(f"Network error contacting backend: {e}") from e
+        body = _json_or_none(r)
+        message = str(body.get("message") or "") if isinstance(body, dict) else ""
+        if r.status_code == 404:
+            if "event" in message.lower():
+                raise BackendError("Event not found. Check the event name (slug).")
+            return []  # "No attendees found"
+        if r.status_code >= 400:
+            raise BackendError(f"Search failed ({r.status_code}): {message or _safe_excerpt(r.text)}")
+        data = body.get("data") if isinstance(body, dict) else None
+        rows = data.get("attendees") if isinstance(data, dict) else None
+        return [a for a in rows if isinstance(a, dict) and a.get("public_id")] if isinstance(rows, list) else []
+
+    def fetch_ticket_groups(self, event_slug: str) -> Dict[str, Any]:
+        """-> {"enabled": bool, "groups": [names]} for the event's ticket groups.
+
+        The group list is staff-only (needs the API key and the numeric event
+        id, which the public check-in info gives us). Events without groups
+        answer 403 "not enabled", which is a normal "no groups", not an error.
+        """
+        self._check_base()
+        if not event_slug:
+            raise BackendError("Event slug is not configured.")
+        if not self.api_key:
+            raise BackendError("API key is not configured.")
+        slug = quote(event_slug, safe="")
+        try:
+            info = httpx.get(f"{self.base_url}/v1/public/events/{slug}/check_in", timeout=self.timeout)
+            body = _json_or_none(info)
+            event_id = (body.get("data") or {}).get("id") if isinstance(body, dict) else None
+            if info.status_code >= 400 or not event_id:
+                raise BackendError("Event not found. Check the event name (slug).")
+            r = httpx.get(f"{self.base_url}/v1/events/{quote(str(event_id), safe='')}/ticket_groups",
+                          headers=self._auth_headers(), timeout=self.timeout)
+        except httpx.HTTPError as e:
+            raise BackendError(f"Network error contacting backend: {e}") from e
+        body = _json_or_none(r)
+        if r.status_code == 403 and "not enabled" in str((body or {}).get("error", "")).lower():
+            return {"enabled": False, "groups": []}
+        if r.status_code in (401, 403):
+            raise BackendError("Not authorized to read ticket groups. Check your API key.")
+        if r.status_code >= 400:
+            raise BackendError(f"Group lookup failed ({r.status_code}): {_safe_excerpt(r.text)}")
+        rows = body.get("groups") if isinstance(body, dict) else None
+        names = []
+        for g in rows if isinstance(rows, list) else []:
+            name = str(g.get("name") or "").strip() if isinstance(g, dict) else ""
+            if name and name not in names:
+                names.append(name)
+        return {"enabled": True, "groups": names}
+
     def check_in(self, public_id: str) -> Dict[str, Any]:
         """PATCH /v1/scan/{public_id}/check_in (requires api key)."""
         self._check_base()
@@ -132,6 +196,13 @@ class BackendAlreadyCheckedIn(BackendError):
         self.checked_in_at = (body or {}).get("checked_in_at") or blocked.get("scanned_at")
         self.checked_in_by = blocked.get("scanned_by_name")
         self.location = blocked.get("location_name")
+
+
+def _json_or_none(r) -> Any:
+    try:
+        return r.json()
+    except ValueError:
+        return None
 
 
 def _safe_excerpt(text: str, limit: int = 200) -> str:

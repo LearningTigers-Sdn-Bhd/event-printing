@@ -171,6 +171,25 @@
     position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
     color: var(--muted); pointer-events: none; display: flex;
   }
+  /* Scanner focus cue: amber = keystrokes are NOT going to the scanner. */
+  .scan-input-wrap.paused #scan-input { border-color: var(--warn); }
+  .scan-input-wrap .scan-hint {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    font-size: 11.5px; color: var(--warn); pointer-events: none; display: none;
+  }
+  .scan-input-wrap.paused .scan-hint { display: block; }
+  .guest-search { margin-top: 12px; }
+  .guest-search input { width: 100%; }
+  .search-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .search-results .sr-empty { color: var(--muted); font-size: 12.5px; padding: 4px 2px; }
+  .search-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .search-row .sr-main { flex: 1; min-width: 0; }
+  .search-row .sr-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-row .sr-meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-row .sr-in { color: var(--warn); font-weight: 600; }
   #scan-input {
     height: 46px; padding: 0 12px 0 40px;
     font-family: var(--font-mono); font-size: 16px; font-weight: 500;

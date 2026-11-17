@@ -56,7 +56,8 @@
     document.removeEventListener("keydown", _drawerKeydown, true);
     const back = _drawerLastFocus && document.contains(_drawerLastFocus) ? _drawerLastFocus : $("settings-btn");
     _drawerLastFocus = null;
-    if (back) back.focus();
+    // Scan mode: the next thing staff do is scan, not tab around the page.
+    if (scannerActive()) focusScan(); else if (back) back.focus();
   }
 
   function _drawerKeydown(e) {
@@ -183,7 +184,7 @@
       table_no: $("f-table").value.trim() || null,
       ticket_type: $("f-type").value,
       role: $("f-role").value.trim() || null,
-      ticket_group: $("f-group").value.trim() || null,
+      ticket_group: (($("f-group-sel").hidden ? $("f-group") : $("f-group-sel")).value || "").trim() || null,
       custom: customValues,
     };
   }
@@ -614,6 +615,7 @@
       input.disabled = !show;
       if (!show) hiddenCount++;
     }
+    $("f-group-sel").disabled = $("f-group").disabled;
     // Ticket ID only feeds the QR code — hide it when QR isn't on the badge.
     // Must also disable it: a hidden-but-required enabled input would block
     // form submission with no visible error.
@@ -1374,28 +1376,60 @@
   });
   setInterval(refresh, 15000);
 
-  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type", "f-role", "f-group"].forEach((id) => {
+  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type", "f-role", "f-group", "f-group-sel"].forEach((id) => {
     $(id).addEventListener("input", schedulePreview);
   });
 
   initVoffsetControl();
+  initScanFocus();
 
   // ================= Badge types (dropdown options) =================
   let badgeTypes = [];
   const MAX_BADGE_TYPES = 30;
 
+  // Connected event: its own ticket types (plus any hidden type already on the
+  // skip list, which the public list leaves out). Otherwise the saved list.
+  function badgeTypeChoices() {
+    if (!eventTicketTypes.length) return badgeTypes;
+    return eventTicketTypes.concat(noPrintTypes.filter((t) => !eventTicketTypes.some((e) => _sameType(e, t))));
+  }
+
   function renderBadgeTypeOptions(selected) {
     const sel = $("f-type");
+    const choices = badgeTypeChoices();
+    selected = selected || sel.value;
     sel.innerHTML = "";
-    for (const t of badgeTypes) {
+    for (const t of choices) {
       const opt = document.createElement("option");
       opt.value = t;
       opt.textContent = t;
       sel.appendChild(opt);
     }
-    if (selected && badgeTypes.some((t) => t.toLowerCase() === selected.toLowerCase())) {
-      sel.value = selected;
+    const keep = choices.find((t) => t.toLowerCase() === (selected || "").toLowerCase());
+    if (keep) sel.value = keep;
+  }
+
+  // Event uses ticket groups -> dropdown of its groups; otherwise free text.
+  function renderGroupOptions() {
+    const sel = $("f-group-sel");
+    const txt = $("f-group");
+    const prev = sel.hidden ? txt.value.trim() : sel.value;
+    sel.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— None —";
+    sel.appendChild(none);
+    for (const g of eventGroups) {
+      const opt = document.createElement("option");
+      opt.value = g;
+      opt.textContent = g;
+      sel.appendChild(opt);
     }
+    sel.hidden = !eventGroups.length;
+    txt.hidden = !sel.hidden;
+    const keep = eventGroups.find((g) => g.toLowerCase() === prev.toLowerCase());
+    sel.value = keep || "";
+    schedulePreview();
   }
 
   function renderBadgeTypesManager() {
@@ -1496,6 +1530,7 @@
     $("banner").classList.toggle("show", !ready);
     _syncScanSection(ready, cfg.show_scanner !== false);
     syncNoPrint(cfg, !!ready);
+    $("search-input").disabled = !ready;
     if (!ready) {
       btn.disabled = true;
       input.disabled = true;
@@ -1581,16 +1616,34 @@
   // ticket types, fetched from EventzFlow. Ticking a row saves straight away.
   let noPrintTypes = [];      // saved skip list
   let eventTicketTypes = [];  // names fetched from EventzFlow
+  let eventGroups = [];       // ticket group names; empty = event has no groups
   let _typesFetchedFor = null;
 
   function syncNoPrint(cfg, ready) {
     noPrintTypes = cfg.no_print_ticket_types || [];
     $("noprint-locked").hidden = ready;
     $("noprint-body").hidden = !ready;
-    if (!ready) { _typesFetchedFor = null; eventTicketTypes = []; return; }
+    if (!ready) {
+      _typesFetchedFor = null; eventTicketTypes = []; eventGroups = [];
+      renderBadgeTypeOptions(); renderGroupOptions();
+      return;
+    }
     renderNoPrint();
     const key = cfg.backend_url + "|" + cfg.event_slug;
-    if (key !== _typesFetchedFor) { _typesFetchedFor = key; loadTicketTypes(); }
+    if (key !== _typesFetchedFor) { _typesFetchedFor = key; loadTicketTypes(); loadTicketGroups(); }
+  }
+
+  async function loadTicketGroups() {
+    try {
+      const r = await fetch("/ticket-groups");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.status);
+      eventGroups = j.enabled ? j.groups || [] : [];
+    } catch (e) {
+      eventGroups = [];
+      log("ticket groups load failed: " + e, "err");
+    }
+    renderGroupOptions();
   }
 
   async function loadTicketTypes() {
@@ -1608,6 +1661,8 @@
       log("ticket types load failed: " + e, "err");
     }
     renderNoPrint();
+    renderBadgeTypeOptions();
+    schedulePreview();
   }
 
   const _sameType = (a, b) => a.toLowerCase() === b.toLowerCase();
@@ -1665,6 +1720,7 @@
       toast("Couldn't save the setting", "err");
     }
     renderNoPrint();
+    renderBadgeTypeOptions();
   }
 
   function addNoPrintType(ev) {
@@ -1966,6 +2022,11 @@
         focusScan();
       }
     }, 80);
+    await enqueueScan(publicId);
+  }
+
+  // Shared by the scanner box and the guest search: one at a time, in order.
+  async function enqueueScan(publicId) {
     if (_scanInFlight) {
       _scanQueue.push(publicId);
       log("queued: " + publicId);
@@ -1976,6 +2037,155 @@
     $("scan-input").disabled = true;
     await _processScan(publicId);
     await _drainQueue();
+  }
+
+  // ================= Guest search (name / email / phone) =================
+  let _searchTimer = null;
+  let _searchSeq = 0;
+
+  function clearSearch() {
+    clearTimeout(_searchTimer);
+    _searchSeq++;
+    $("search-input").value = "";
+    $("search-results").replaceChildren();
+  }
+
+  function _searchMsg(text) {
+    const d = document.createElement("div");
+    d.className = "sr-empty";
+    d.textContent = text;
+    $("search-results").replaceChildren(d);
+  }
+
+  async function runSearch() {
+    const q = $("search-input").value.trim();
+    const seq = ++_searchSeq;
+    if (!q) { $("search-results").replaceChildren(); return; }
+    try {
+      const r = await fetch("/search?q=" + encodeURIComponent(q));
+      const j = await r.json();
+      if (seq !== _searchSeq) return; // a newer keystroke superseded this one
+      if (!r.ok) throw new Error(j.detail || r.status);
+      if (!j.method) { _searchMsg("Keep typing — a name (2+ letters), full email, or phone (4+ digits)."); return; }
+      if (!j.results.length) { _searchMsg("No paid ticket matches “" + q + "”."); return; }
+      $("search-results").replaceChildren(...j.results.map(_searchRow));
+    } catch (e) {
+      if (seq === _searchSeq) _searchMsg("Search failed: " + (e.message || e));
+    }
+  }
+
+  function _searchRow(a) {
+    const row = document.createElement("div");
+    row.className = "search-row";
+    const main = document.createElement("div");
+    main.className = "sr-main";
+    const name = document.createElement("div");
+    name.className = "sr-name";
+    name.textContent = a.name || a.public_id;
+    const meta = document.createElement("div");
+    meta.className = "sr-meta";
+    meta.textContent = [a.type_name, a.email, a.phone].filter(Boolean).join(" · ");
+    if (a.checked_in) {
+      const tag = document.createElement("span");
+      tag.className = "sr-in";
+      tag.textContent = " · already in";
+      meta.appendChild(tag);
+    }
+    main.append(name, meta);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = a.checked_in ? "ghost icon" : "icon";
+    btn.textContent = a.checked_in ? "Reprint" : "Check in";
+    btn.onclick = () => {
+      // Search is a one-shot: do the action, clear it, hand the keyboard back to the scanner.
+      clearSearch();
+      if (a.checked_in) reprintTicket(a.public_id, btn); else enqueueScan(a.public_id);
+      focusScan();
+    };
+    row.append(main, btn);
+    return row;
+  }
+
+  // ================= Keep the scanner focused =================
+  // Scanners type into whatever has focus, so after a name search (or any
+  // click on empty space) the next badge would land nowhere. Rules:
+  //  1. focus falls to <body> while the scanner is open -> give it back
+  //  2. a printable key hits <body> -> focus the scanner first, so that very
+  //     keystroke (and the rest of the burst) lands in it
+  //  3. the search box is untouched for IDLE_MS -> hand focus back
+  //  4. a burst typed far faster than a human types, ended by Enter, inside the
+  //     search box is a scan, not a search -> run it as a scan
+  const SEARCH_IDLE_MS = 15000;
+  const SCAN_CHAR_MS = 40;
+
+  function scannerActive() {
+    const sz = $("scan-section");
+    const input = $("scan-input");
+    return !!(sz && sz.open && !sz.hidden && input && !input.disabled
+      && !$("drawer").classList.contains("open"));
+  }
+
+  function syncScanFocusCue() {
+    $("scan-input").parentElement.classList.toggle("paused",
+      scannerActive() && document.activeElement !== $("scan-input"));
+  }
+
+  function initScanFocus() {
+    const input = $("scan-input");
+    const search = $("search-input");
+    const fallBackToScanner = () => setTimeout(() => {
+      if (scannerActive() && (!document.activeElement || document.activeElement === document.body)) focusScan();
+      syncScanFocusCue();
+    }, 0);
+    document.addEventListener("focusout", fallBackToScanner);
+    document.addEventListener("focusin", syncScanFocusCue);
+    window.addEventListener("focus", fallBackToScanner);
+    setInterval(syncScanFocusCue, 1000); // also catches the input re-enabling after a scan
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      const a = document.activeElement;
+      if ((!a || a === document.body) && scannerActive()) focusScan();
+    }, true);
+
+    let idle = null;
+    let burst = { text: "", t: 0, fast: true };
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { clearSearch(); focusScan(); return; }
+      const now = performance.now();
+      if (e.key.length === 1) {
+        if (!search.value) burst = { text: "", t: now, fast: true };
+        else if (now - burst.t > SCAN_CHAR_MS) burst.fast = false;
+        burst.t = now;
+        burst.text += e.key;
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const code = search.value.trim();
+        if (burst.fast && code.length >= 6 && burst.text.length === search.value.length &&!/\s/.test(code)) {
+          clearSearch();
+          input.value = code;
+          $("scan-form").requestSubmit();
+          focusScan();
+        } else {
+          clearTimeout(_searchTimer);
+          runSearch();
+        }
+      }
+    });
+    search.addEventListener("input", () => {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(runSearch, 300);
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        if (document.activeElement === search) { search.blur(); focusScan(); }
+        if (!search.value.trim()) clearSearch();
+      }, SEARCH_IDLE_MS);
+    });
+    search.addEventListener("blur", () => {
+      // Leaving the box empty-handed: no reason to keep stale results around.
+      setTimeout(() => {
+        if (!search.value.trim() && !$("search-results").contains(document.activeElement)) clearSearch();
+      }, 200);
+    });
   }
 
   function reprintLastScan() {

@@ -433,6 +433,45 @@ def ticket_types():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/ticket-groups")
+def ticket_groups():
+    """The connected event's ticket groups. `enabled` is false when the event
+    doesn't use groups, so the dashboard keeps its free-text field."""
+    cfg, client = _backend()
+    try:
+        return {"ok": True, **client.fetch_ticket_groups(cfg["event_slug"])}
+    except BackendError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+def _search_method(q: str) -> str | None:
+    """Same rules the EventzFlow check-in page applies: '@' means email, mostly
+    digits means phone, anything else is a name. None = too short to search."""
+    q = q.strip()
+    digits = re.sub(r"\D", "", q)
+    if "@" in q:
+        return "email" if len(q) >= 5 else None
+    if digits and re.fullmatch(r"[\d\s+()\-]+", q):
+        return "phone" if len(digits) >= 4 else None
+    return "name" if len(q) >= 2 else None
+
+
+@app.get("/search")
+def search_guests(q: str = ""):
+    """Find guests by name, email or phone when the QR can't be scanned.
+    Pick one, then check in through /scan/{public_id} as usual."""
+    cfg, client = _backend(require_key=False)
+    q = q.strip()[:100]
+    method = _search_method(q)
+    if method is None:
+        return {"ok": True, "method": None, "results": []}
+    try:
+        rows = client.search_attendees(cfg["event_slug"], method, q)
+    except BackendError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "method": method, "results": rows}
+
+
 @app.post("/scan/{public_id}")
 def scan_ticket(public_id: str):
     """

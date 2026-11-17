@@ -63,10 +63,17 @@
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></svg>
               </span>
               <input id="scan-input" placeholder="Ready to scan…" autocomplete="off" />
+              <span class="scan-hint">Click or press a key</span>
             </div>
             <button type="submit" id="scan-btn">Check in &amp; print</button>
             <div class="scan-note" id="scan-note" role="alert"></div>
           </form>
+
+          <div class="guest-search" id="guest-search">
+            <label class="sr-only" for="search-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Find a guest</label>
+            <input id="search-input" type="search" placeholder="No QR? Find guest by name, email or phone" autocomplete="off" />
+            <div class="search-results" id="search-results" aria-live="polite"></div>
+          </div>
 
           <div id="last-scan" aria-live="polite">
             <div class="last-state" id="last-state"><span id="last-state-word"></span><span class="last-time" id="last-time"></span></div>
@@ -111,6 +118,7 @@
             </label>
             <label>Group / room
               <input id="f-group" placeholder="e.g., Room A" />
+              <select id="f-group-sel" hidden></select>
             </label>
             <div id="custom-entry-fields" class="custom-entry-fields" style="display:none"></div>
             <div class="actions">
