@@ -90,6 +90,7 @@ class TicketRoleLabelTests(unittest.TestCase):
             ticket_type="Interested Delegate",
             custom={"custom_abc123": "Sponsor A"},
             role="Speaker",
+            ticket_group="Room A",
         )
 
         with patch.object(pdf_generator.canvas, "Canvas", FakeCanvas):
@@ -103,6 +104,19 @@ class TicketRoleLabelTests(unittest.TestCase):
             "elements": ["ticket_role", "role"],
         })
         self.assertLess(self._block_index(events, "SPEAKER"), self._block_index(events, "DELEGATE"))
+
+    def test_ticket_group_prints_when_in_layout_and_is_absent_otherwise(self):
+        with_group = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "ticket_group"],
+        })
+        self.assertGreaterEqual(self._block_index(with_group, "ROOM A"), 0)
+
+        without_group = self._render({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name"],
+        })
+        self.assertEqual(self._block_index(without_group, "ROOM A"), -1)
 
     def test_badge_sections_render_in_requested_order(self):
         events = self._render({

@@ -18,6 +18,7 @@ class TicketPayload(BaseModel):
     title: Optional[str] = Field(default=None, max_length=200, example="CEO")
     ticket_type: str = Field(..., max_length=100, example="Delegate")
     role: Optional[str] = Field(default=None, max_length=100)
+    ticket_group: Optional[str] = Field(default=None, max_length=100, example="Room A")
     country: Optional[str] = Field(default=None, max_length=100, example="Malaysia")
     table_no: Optional[str] = Field(default=None, max_length=50, example="12")
     custom: Dict[str, str] = Field(default_factory=dict, example={"Sponsor": "Acme"})
@@ -46,7 +47,7 @@ class TicketPayload(BaseModel):
     def sanitize_optional_name(cls, v: Any) -> Optional[str]:
         return _sanitize_str(v)
 
-    @field_validator("company", "title", "country", "table_no", "role", mode="before")
+    @field_validator("company", "title", "country", "table_no", "role", "ticket_group", mode="before")
     @classmethod
     def sanitize_optional_str(cls, v: Any) -> Optional[str]:
         if v is None:

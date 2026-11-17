@@ -341,6 +341,7 @@ def _ticket_payload_from_backend(data: dict, custom_defs: Any = None) -> TicketP
         table_no=table_no,
         ticket_type=str(data.get("ticket_type") or "").strip() or "Visitor",
         role=data.get("role"),
+        ticket_group=data.get("ticket_group"),  # {id, name} or null; models.py keeps the name
         custom=_custom_values_from_backend(custom_fields, custom_defs),
     )
 

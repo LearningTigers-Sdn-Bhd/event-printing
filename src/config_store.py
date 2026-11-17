@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 _APP_NAME = "event-printer"
 
-VALID_ELEMENTS = ("name", "role", "ticket_role", "company", "title", "country", "table_no", "qr")
+VALID_ELEMENTS = ("name", "role", "ticket_role", "ticket_group", "company", "title", "country", "table_no", "qr")
 
 CUSTOM_FIELD_ID_PREFIX = "custom_"
 MAX_CUSTOM_FIELDS = 6

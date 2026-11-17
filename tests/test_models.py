@@ -39,6 +39,21 @@ class TicketPayloadTests(unittest.TestCase):
 
         self.assertEqual(payload.custom, {"Sponsor": "Acme"})
 
+    def test_backend_ticket_group_dict_keeps_the_name(self):
+        payload = TicketPayload(
+            ticket_id="A1-0245",
+            name="Test User",
+            ticket_type="Visitor",
+            ticket_group={"id": 12, "name": " Room A "},
+        )
+
+        self.assertEqual(payload.ticket_group, "Room A")
+
+    def test_missing_ticket_group_is_none(self):
+        for value in (None, ""):
+            payload = TicketPayload(ticket_id="A1", name="T", ticket_type="Visitor", ticket_group=value)
+            self.assertIsNone(payload.ticket_group)
+
 
 if __name__ == "__main__":
     unittest.main()

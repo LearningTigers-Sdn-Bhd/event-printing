@@ -183,6 +183,7 @@
       table_no: $("f-table").value.trim() || null,
       ticket_type: $("f-type").value,
       role: $("f-role").value.trim() || null,
+      ticket_group: $("f-group").value.trim() || null,
       custom: customValues,
     };
   }
@@ -192,6 +193,7 @@
     name: "Name",
     role: "Ticket type",
     ticket_role: "Role",
+    ticket_group: "Group / room",
     company: "Company",
     title: "Position",
     country: "Country",
@@ -202,6 +204,7 @@
     name: "attendee_name",
     role: "ticket_type",
     ticket_role: "role",
+    ticket_group: "ticket_group",
     company: "company",
     title: "title",
     country: "country",
@@ -594,6 +597,7 @@
     name: "f-name",
     role: "f-type",
     ticket_role: "f-role",
+    ticket_group: "f-group",
     company: "f-company",
     title: "f-title",
     country: "f-country",
@@ -1370,7 +1374,7 @@
   });
   setInterval(refresh, 15000);
 
-  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type", "f-role"].forEach((id) => {
+  ["f-ticket", "f-name", "f-company", "f-title", "f-country", "f-table", "f-type", "f-role", "f-group"].forEach((id) => {
     $(id).addEventListener("input", schedulePreview);
   });
 

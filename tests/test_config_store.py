@@ -67,6 +67,13 @@ class PrinterModeTests(unittest.TestCase):
         })
         self.assertEqual(layout["elements"], ["role", "ticket_role"])
 
+    def test_ticket_group_element_is_valid(self):
+        layout = config_store.sanitize_layout({
+            "paper": {"width_mm": 100, "height_mm": 80},
+            "elements": ["name", "ticket_group"],
+        })
+        self.assertEqual(layout["elements"], ["name", "ticket_group"])
+
 
 class ElementBoldsTests(unittest.TestCase):
     def test_bold_override_persisted(self):
